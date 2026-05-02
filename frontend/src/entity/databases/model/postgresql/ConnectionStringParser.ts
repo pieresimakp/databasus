@@ -5,6 +5,7 @@ export type ParseResult = {
   password: string;
   database: string;
   isHttps: boolean;
+  sslMode?: string;
 };
 
 export type ParseError = {
@@ -81,7 +82,8 @@ export class ConnectionStringParser {
 
       if (azureMatch) {
         const [, user, , password, host, port, database, queryString] = azureMatch;
-        const isHttps = this.checkSslMode(queryString);
+        const sslMode = this.getSslMode(queryString);
+        const isHttps = this.isSslEnabled(sslMode);
 
         return {
           host: host,
@@ -90,6 +92,7 @@ export class ConnectionStringParser {
           password: decodeURIComponent(password),
           database: decodeURIComponent(database),
           isHttps,
+          sslMode,
         };
       }
 
@@ -101,7 +104,8 @@ export class ConnectionStringParser {
       const username = decodeURIComponent(url.username);
       const password = decodeURIComponent(url.password);
       const database = decodeURIComponent(url.pathname.slice(1)); // Remove leading /
-      const isHttps = this.checkSslMode(url.search);
+      const sslMode = this.getSslMode(url.search);
+      const isHttps = this.isSslEnabled(sslMode);
 
       // Validate required fields
       if (!host) {
@@ -127,6 +131,7 @@ export class ConnectionStringParser {
         password,
         database,
         isHttps,
+        sslMode,
       };
     } catch (e) {
       return {
@@ -162,7 +167,8 @@ export class ConnectionStringParser {
       const params = new URLSearchParams(queryString);
       const username = params.get('user');
       const password = params.get('password');
-      const isHttps = this.checkSslMode(queryString);
+      const sslMode = this.getSslMode(queryString);
+      const isHttps = this.isSslEnabled(sslMode);
 
       if (!username) {
         return {
@@ -185,6 +191,7 @@ export class ConnectionStringParser {
         password: decodeURIComponent(password),
         database: decodeURIComponent(database),
         isHttps,
+        sslMode,
       };
     } catch (e) {
       return {
@@ -215,7 +222,8 @@ export class ConnectionStringParser {
       const database = params['dbname'] || params['database'];
       const username = params['user'] || params['username'];
       const password = params['password'];
-      const sslmode = params['sslmode'];
+      const sslMode = params['sslmode'];
+      const isHttps = this.isSslEnabled(sslMode);
 
       if (!host) {
         return {
@@ -245,8 +253,6 @@ export class ConnectionStringParser {
         };
       }
 
-      const isHttps = this.isSslEnabled(sslmode);
-
       return {
         host,
         port: port ? parseInt(port, 10) : 5432,
@@ -254,6 +260,7 @@ export class ConnectionStringParser {
         password,
         database,
         isHttps,
+        sslMode,
       };
     } catch (e) {
       return {
@@ -263,15 +270,13 @@ export class ConnectionStringParser {
     }
   }
 
-  private static checkSslMode(queryString: string | undefined | null): boolean {
-    if (!queryString) return false;
+  private static getSslMode(queryString: string | undefined | null): string | undefined {
+    if (!queryString) return undefined;
 
     const params = new URLSearchParams(
       queryString.startsWith('?') ? queryString.slice(1) : queryString,
     );
-    const sslmode = params.get('sslmode');
-
-    return this.isSslEnabled(sslmode);
+    return params.get('sslmode') || undefined;
   }
 
   private static isSslEnabled(sslmode: string | null | undefined): boolean {

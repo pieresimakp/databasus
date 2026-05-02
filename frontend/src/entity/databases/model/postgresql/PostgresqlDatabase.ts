@@ -13,6 +13,10 @@ export interface PostgresqlDatabase {
   password: string;
   database?: string;
   isHttps: boolean;
+  sslMode?: string;
+  sslCa?: string;
+  sslCert?: string;
+  sslKey?: string;
 
   // backup settings
   includeSchemas?: string[];

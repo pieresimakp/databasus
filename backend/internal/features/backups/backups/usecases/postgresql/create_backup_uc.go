@@ -25,6 +25,7 @@ import (
 	encryption_secrets "databasus-backend/internal/features/encryption/secrets"
 	"databasus-backend/internal/features/storages"
 	"databasus-backend/internal/util/encryption"
+	files_utils "databasus-backend/internal/util/files"
 	"databasus-backend/internal/util/tools"
 )
 
@@ -86,6 +87,52 @@ func (uc *CreatePostgresqlBackupUsecase) Execute(
 		return nil, fmt.Errorf("failed to decrypt database password: %w", err)
 	}
 
+	var sslCaPath, sslCertPath, sslKeyPath string
+	if pg.SslCa != "" {
+		ca, err := uc.fieldEncryptor.Decrypt(db.ID, pg.SslCa)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt SSL CA: %w", err)
+		}
+		sslCaPath, err = files_utils.CreateTempFile("pg_ca", ca)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp SSL CA file: %w", err)
+		}
+	}
+
+	if pg.SslCert != "" {
+		cert, err := uc.fieldEncryptor.Decrypt(db.ID, pg.SslCert)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt SSL cert: %w", err)
+		}
+		sslCertPath, err = files_utils.CreateTempFile("pg_cert", cert)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp SSL cert file: %w", err)
+		}
+	}
+
+	if pg.SslKey != "" {
+		key, err := uc.fieldEncryptor.Decrypt(db.ID, pg.SslKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt SSL key: %w", err)
+		}
+		sslKeyPath, err = files_utils.CreateTempFile("pg_key", key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp SSL key file: %w", err)
+		}
+	}
+
+	defer func() {
+		if sslCaPath != "" {
+			_ = os.Remove(sslCaPath)
+		}
+		if sslCertPath != "" {
+			_ = os.Remove(sslCertPath)
+		}
+		if sslKeyPath != "" {
+			_ = os.Remove(sslKeyPath)
+		}
+	}()
+
 	return uc.streamToStorage(
 		ctx,
 		backup,
@@ -93,6 +140,9 @@ func (uc *CreatePostgresqlBackupUsecase) Execute(
 		tools.GetPostgresqlExecutable(pg.Version, "pg_dump"),
 		args,
 		decryptedPassword,
+		sslCaPath,
+		sslCertPath,
+		sslKeyPath,
 		storage,
 		db,
 		backupProgressListener,
@@ -107,6 +157,9 @@ func (uc *CreatePostgresqlBackupUsecase) streamToStorage(
 	pgBin string,
 	args []string,
 	password string,
+	sslCaPath string,
+	sslCertPath string,
+	sslKeyPath string,
 	storage *storages.Storage,
 	db *databases.Database,
 	backupProgressListener func(completedMBs float64),
@@ -133,9 +186,10 @@ func (uc *CreatePostgresqlBackupUsecase) streamToStorage(
 	if err := uc.setupPgEnvironment(
 		cmd,
 		pgpassFile,
-		db.Postgresql.IsHttps,
-		password,
-		db.Postgresql.CpuCount,
+		db.Postgresql,
+		sslCaPath,
+		sslCertPath,
+		sslKeyPath,
 		pgBin,
 	); err != nil {
 		return nil, err
@@ -425,22 +479,17 @@ func (uc *CreatePostgresqlBackupUsecase) setupPgpassFile(
 func (uc *CreatePostgresqlBackupUsecase) setupPgEnvironment(
 	cmd *exec.Cmd,
 	pgpassFile string,
-	shouldRequireSSL bool,
-	password string,
-	cpuCount int,
+	pgConfig *pgtypes.PostgresqlDatabase,
+	sslCaPath string,
+	sslCertPath string,
+	sslKeyPath string,
 	pgBin string,
 ) error {
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, "PGPASSFILE="+pgpassFile)
 
 	uc.logger.Info("Using temporary .pgpass file for authentication", "pgpassFile", pgpassFile)
-	uc.logger.Info("Setting up PostgreSQL environment",
-		"passwordLength", len(password),
-		"passwordEmpty", password == "",
-		"pgBin", pgBin,
-		"usingPgpassFile", true,
-		"parallelJobs", cpuCount,
-	)
+	uc.logger.Info("Setting up PostgreSQL environment", "parallelJobs", pgConfig.CpuCount)
 
 	cmd.Env = append(cmd.Env,
 		"PGCLIENTENCODING=UTF8",
@@ -449,18 +498,21 @@ func (uc *CreatePostgresqlBackupUsecase) setupPgEnvironment(
 		"LANG=C.UTF-8",
 	)
 
-	if shouldRequireSSL {
-		cmd.Env = append(cmd.Env, "PGSSLMODE=require")
-		uc.logger.Info("Using required SSL mode", "configuredHttps", shouldRequireSSL)
-	} else {
-		cmd.Env = append(cmd.Env, "PGSSLMODE=prefer")
-		uc.logger.Info("Using preferred SSL mode", "configuredHttps", shouldRequireSSL)
+	sslMode := pgConfig.SslMode
+	if sslMode == "" {
+		if pgConfig.IsHttps {
+			sslMode = "require"
+		} else {
+			sslMode = "prefer"
+		}
 	}
 
+	cmd.Env = append(cmd.Env, "PGSSLMODE="+sslMode)
+
 	cmd.Env = append(cmd.Env,
-		"PGSSLCERT=",
-		"PGSSLKEY=",
-		"PGSSLROOTCERT=",
+		"PGSSLCERT="+sslCertPath,
+		"PGSSLKEY="+sslKeyPath,
+		"PGSSLROOTCERT="+sslCaPath,
 		"PGSSLCRL=",
 	)
 

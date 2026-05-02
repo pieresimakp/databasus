@@ -1,5 +1,5 @@
-import { CopyOutlined, DownOutlined, InfoCircleOutlined, UpOutlined } from '@ant-design/icons';
-import { App, Button, Checkbox, Input, InputNumber, Select, Switch, Tooltip } from 'antd';
+import { CopyOutlined, DownOutlined, InfoCircleOutlined, UpOutlined, UploadOutlined } from '@ant-design/icons';
+import { App, Button, Checkbox, Input, InputNumber, Select, Tooltip, Upload } from 'antd';
 import { useEffect, useState } from 'react';
 
 import { IS_CLOUD } from '../../../../constants';
@@ -85,6 +85,7 @@ export const EditPostgreSqlSpecificDataComponent = ({
         password: result.password,
         database: result.database,
         isHttps: result.isHttps,
+        sslMode: result.sslMode,
         cpuCount: 1,
       },
     };
@@ -185,6 +186,25 @@ export const EditPostgreSqlSpecificDataComponent = ({
     }
 
     onSaved(trimmedDatabase);
+  };
+
+  const handleFileUpload = (file: File, field: 'sslCa' | 'sslCert' | 'sslKey') => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+
+      setEditingDatabase((prev) => {
+        if (!prev?.postgresql) return prev;
+
+        return {
+          ...prev,
+          postgresql: { ...prev.postgresql, [field]: content },
+        };
+      });
+      setIsConnectionTested(false);
+    };
+    reader.readAsText(file);
+    return false; // Prevent upload to server
   };
 
   useEffect(() => {
@@ -423,21 +443,128 @@ export const EditPostgreSqlSpecificDataComponent = ({
         )}
 
         <div className="mb-1 flex w-full items-center">
-          <div className="min-w-[150px]">Use HTTPS</div>
-          <Switch
-            checked={editingDatabase.postgresql?.isHttps}
-            onChange={(checked) => {
+          <div className="min-w-[150px]">SSL mode</div>
+          <Select
+            value={
+              editingDatabase.postgresql?.sslMode ||
+              (editingDatabase.postgresql?.isHttps ? 'require' : 'disable')
+            }
+            onChange={(value) => {
               if (!editingDatabase.postgresql) return;
-
               setEditingDatabase({
                 ...editingDatabase,
-                postgresql: { ...editingDatabase.postgresql, isHttps: checked },
+                postgresql: {
+                  ...editingDatabase.postgresql,
+                  sslMode: value,
+                  isHttps: value !== 'disable',
+                },
               });
               setIsConnectionTested(false);
             }}
+            options={[
+              { label: 'Disable', value: 'disable' },
+              { label: 'Prefer', value: 'prefer' },
+              { label: 'Require', value: 'require' },
+              { label: 'Verify CA', value: 'verify-ca' },
+              { label: 'Verify Full', value: 'verify-full' },
+            ]}
             size="small"
+            className="max-w-[200px] grow"
           />
         </div>
+
+        {(editingDatabase.postgresql?.sslMode !== 'disable' &&
+          editingDatabase.postgresql?.sslMode) ||
+          editingDatabase.postgresql?.isHttps ? (
+            <>
+              <div className="mb-1 flex w-full items-start">
+                <div className="mt-1 min-w-[150px]">SSL CA</div>
+                <div className="flex max-w-[400px] grow flex-col">
+                  <Input.TextArea
+                    value={editingDatabase.postgresql?.sslCa}
+                    onChange={(e) => {
+                      if (!editingDatabase.postgresql) return;
+                      setEditingDatabase({
+                        ...editingDatabase,
+                        postgresql: { ...editingDatabase.postgresql, sslCa: e.target.value },
+                      });
+                      setIsConnectionTested(false);
+                    }}
+                    size="small"
+                    className="w-full"
+                    placeholder="Paste CA certificate (optional)"
+                    rows={2}
+                  />
+                  <Upload
+                    beforeUpload={(file) => handleFileUpload(file, 'sslCa')}
+                    showUploadList={false}
+                  >
+                    <Button size="small" icon={<UploadOutlined />} className="mt-1">
+                      Choose file
+                    </Button>
+                  </Upload>
+                </div>
+              </div>
+
+              <div className="mb-1 flex w-full items-start">
+                <div className="mt-1 min-w-[150px]">SSL Cert</div>
+                <div className="flex max-w-[400px] grow flex-col">
+                  <Input.TextArea
+                    value={editingDatabase.postgresql?.sslCert}
+                    onChange={(e) => {
+                      if (!editingDatabase.postgresql) return;
+                      setEditingDatabase({
+                        ...editingDatabase,
+                        postgresql: { ...editingDatabase.postgresql, sslCert: e.target.value },
+                      });
+                      setIsConnectionTested(false);
+                    }}
+                    size="small"
+                    className="w-full"
+                    placeholder="Paste client certificate (optional)"
+                    rows={2}
+                  />
+                  <Upload
+                    beforeUpload={(file) => handleFileUpload(file, 'sslCert')}
+                    showUploadList={false}
+                  >
+                    <Button size="small" icon={<UploadOutlined />} className="mt-1">
+                      Choose file
+                    </Button>
+                  </Upload>
+                </div>
+              </div>
+
+              <div className="mb-1 flex w-full items-start">
+                <div className="mt-1 min-w-[150px]">SSL Key</div>
+                <div className="flex max-w-[400px] grow flex-col">
+                  <Input.TextArea
+                    value={editingDatabase.postgresql?.sslKey}
+                    onChange={(e) => {
+                      if (!editingDatabase.postgresql) return;
+                      setEditingDatabase({
+                        ...editingDatabase,
+                        postgresql: { ...editingDatabase.postgresql, sslKey: e.target.value },
+                      });
+                      setIsConnectionTested(false);
+                    }}
+                    size="small"
+                    className="w-full"
+                    placeholder="Paste client key (optional)"
+                    rows={2}
+                  />
+                  <Upload
+                    beforeUpload={(file) => handleFileUpload(file, 'sslKey')}
+                    showUploadList={false}
+                  >
+                    <Button size="small" icon={<UploadOutlined />} className="mt-1">
+                      Choose file
+                    </Button>
+                  </Upload>
+                </div>
+              </div>
+            </>
+          ) : null}
 
         {isRestoreMode && !IS_CLOUD && (
           <div className="mb-5 flex w-full items-center">

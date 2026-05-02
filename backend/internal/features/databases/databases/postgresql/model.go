@@ -2,6 +2,8 @@ package postgresql
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -42,6 +44,10 @@ type PostgresqlDatabase struct {
 	Password string  `json:"password" gorm:"type:text"`
 	Database *string `json:"database" gorm:"type:text"`
 	IsHttps  bool    `json:"isHttps"  gorm:"type:boolean;default:false"`
+	SslMode  string  `json:"sslMode"  gorm:"column:ssl_mode;type:text;not null;default:'disable'"`
+	SslCa    string  `json:"sslCa"    gorm:"column:ssl_ca;type:text;not null;default:''"`
+	SslCert  string  `json:"sslCert"  gorm:"column:ssl_cert;type:text;not null;default:''"`
+	SslKey   string  `json:"sslKey"   gorm:"column:ssl_key;type:text;not null;default:''"`
 
 	// backup settings
 	IncludeSchemas       []string `json:"includeSchemas" gorm:"-"`
@@ -167,6 +173,9 @@ func (p *PostgresqlDatabase) HideSensitiveData() {
 	}
 
 	p.Password = ""
+	p.SslCa = ""
+	p.SslCert = ""
+	p.SslKey = ""
 }
 
 func (p *PostgresqlDatabase) ValidateUpdate(old *PostgresqlDatabase) error {
@@ -190,6 +199,10 @@ func (p *PostgresqlDatabase) Update(incoming *PostgresqlDatabase) {
 	p.Username = incoming.Username
 	p.Database = incoming.Database
 	p.IsHttps = incoming.IsHttps
+	p.SslMode = incoming.SslMode
+	p.SslCa = incoming.SslCa
+	p.SslCert = incoming.SslCert
+	p.SslKey = incoming.SslKey
 	p.IncludeSchemas = incoming.IncludeSchemas
 	p.CpuCount = incoming.CpuCount
 
@@ -208,6 +221,30 @@ func (p *PostgresqlDatabase) EncryptSensitiveFields(
 			return err
 		}
 		p.Password = encrypted
+	}
+
+	if p.SslCa != "" {
+		encrypted, err := encryptor.Encrypt(databaseID, p.SslCa)
+		if err != nil {
+			return err
+		}
+		p.SslCa = encrypted
+	}
+
+	if p.SslCert != "" {
+		encrypted, err := encryptor.Encrypt(databaseID, p.SslCert)
+		if err != nil {
+			return err
+		}
+		p.SslCert = encrypted
+	}
+
+	if p.SslKey != "" {
+		encrypted, err := encryptor.Encrypt(databaseID, p.SslKey)
+		if err != nil {
+			return err
+		}
+		p.SslKey = encrypted
 	}
 
 	return nil
@@ -240,22 +277,11 @@ func (p *PostgresqlDatabase) PopulateVersion(
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	password, err := decryptPasswordIfNeeded(p.Password, encryptor, databaseID)
+	conn, cleanup, err := p.connect(ctx, logger, encryptor, databaseID)
 	if err != nil {
-		return fmt.Errorf("failed to decrypt password: %w", err)
+		return err
 	}
-
-	connStr := buildConnectionStringForDB(p, *p.Database, password)
-
-	conn, err := pgx.Connect(ctx, connStr)
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-	defer func() {
-		if closeErr := conn.Close(ctx); closeErr != nil {
-			logger.Error("Failed to close connection", "error", closeErr)
-		}
-	}()
+	defer cleanup()
 
 	detectedVersion, err := detectDatabaseVersion(ctx, conn)
 	if err != nil {
@@ -290,22 +316,11 @@ func (p *PostgresqlDatabase) IsUserReadOnly(
 		return false, nil, errors.New("read-only check is not supported for WAL backup type")
 	}
 
-	password, err := decryptPasswordIfNeeded(p.Password, encryptor, databaseID)
+	conn, cleanup, err := p.connect(ctx, logger, encryptor, databaseID)
 	if err != nil {
-		return false, nil, fmt.Errorf("failed to decrypt password: %w", err)
+		return false, nil, err
 	}
-
-	connStr := buildConnectionStringForDB(p, *p.Database, password)
-
-	conn, err := pgx.Connect(ctx, connStr)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to connect to database: %w", err)
-	}
-	defer func() {
-		if closeErr := conn.Close(ctx); closeErr != nil {
-			logger.Error("Failed to close connection", "error", closeErr)
-		}
-	}()
+	defer cleanup()
 
 	var privileges []string
 
@@ -466,22 +481,11 @@ func (p *PostgresqlDatabase) CreateReadOnlyUser(
 		return "", "", errors.New("read-only user creation is not supported for WAL backup type")
 	}
 
-	password, err := decryptPasswordIfNeeded(p.Password, encryptor, databaseID)
+	conn, cleanup, err := p.connect(ctx, logger, encryptor, databaseID)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to decrypt password: %w", err)
+		return "", "", err
 	}
-
-	connStr := buildConnectionStringForDB(p, *p.Database, password)
-
-	conn, err := pgx.Connect(ctx, connStr)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to connect to database: %w", err)
-	}
-	defer func() {
-		if closeErr := conn.Close(ctx); closeErr != nil {
-			logger.Error("Failed to close connection", "error", closeErr)
-		}
-	}()
+	defer cleanup()
 
 	// Pre-validate: Check if current user can create roles
 	var canCreateRole, isSuperuser bool
@@ -911,29 +915,12 @@ func testSingleDatabaseConnection(
 		return errors.New("database name is required for single database backup (pg_dump)")
 	}
 
-	// Decrypt password if needed
-	password, err := decryptPasswordIfNeeded(postgresDb.Password, encryptor, databaseID)
-	if err != nil {
-		return fmt.Errorf("failed to decrypt password: %w", err)
-	}
-
 	// Build connection string for the specific database
-	connStr := buildConnectionStringForDB(postgresDb, *postgresDb.Database, password)
-
-	// Test connection
-	conn, err := pgx.Connect(ctx, connStr)
+	conn, cleanup, err := postgresDb.connect(ctx, logger, encryptor, databaseID)
 	if err != nil {
-		// TODO make more readable errors:
-		// - handle wrong creds
-		// - handle wrong database name
-		// - handle wrong protocol
-		return fmt.Errorf("failed to connect to database '%s': %w", *postgresDb.Database, err)
+		return err
 	}
-	defer func() {
-		if closeErr := conn.Close(ctx); closeErr != nil {
-			logger.Error("Failed to close connection", "error", closeErr)
-		}
-	}()
+	defer cleanup()
 
 	// Detect and set the database version automatically
 	detectedVersion, err := detectDatabaseVersion(ctx, conn)
@@ -1112,11 +1099,90 @@ func checkBackupPermissions(
 	return nil
 }
 
+func (p *PostgresqlDatabase) connect(
+	ctx context.Context,
+	logger *slog.Logger,
+	encryptor encryption.FieldEncryptor,
+	databaseID uuid.UUID,
+) (*pgx.Conn, func(), error) {
+	password, err := decryptPasswordIfNeeded(p.Password, encryptor, databaseID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to decrypt password: %w", err)
+	}
+
+	connStr := buildConnectionStringForDB(p, *p.Database, password)
+
+	config, err := pgx.ParseConfig(connStr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse connection string: %w", err)
+	}
+
+	// Handle SSL certificates for pgx (in-memory)
+	if p.SslMode != "" && p.SslMode != "disable" {
+		config.TLSConfig = &tls.Config{}
+
+		if p.SslCa != "" {
+			ca, err := encryptor.Decrypt(databaseID, p.SslCa)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to decrypt SSL CA: %w", err)
+			}
+
+			config.TLSConfig.RootCAs = x509.NewCertPool()
+			config.TLSConfig.RootCAs.AppendCertsFromPEM([]byte(ca))
+		}
+
+		if p.SslCert != "" && p.SslKey != "" {
+			cert, err := encryptor.Decrypt(databaseID, p.SslCert)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to decrypt SSL cert: %w", err)
+			}
+
+			key, err := encryptor.Decrypt(databaseID, p.SslKey)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to decrypt SSL key: %w", err)
+			}
+
+			tlsCert, err := tls.X509KeyPair([]byte(cert), []byte(key))
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to load SSL key pair: %w", err)
+			}
+
+			config.TLSConfig.Certificates = []tls.Certificate{tlsCert}
+		}
+
+		if p.SslMode == "verify-ca" || p.SslMode == "verify-full" {
+			config.TLSConfig.InsecureSkipVerify = false
+		} else {
+			config.TLSConfig.InsecureSkipVerify = true
+		}
+
+		if p.SslMode == "verify-full" {
+			config.TLSConfig.ServerName = p.Host
+		}
+	}
+
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to connect to database '%s': %w", *p.Database, err)
+	}
+
+	cleanup := func() {
+		if err := conn.Close(ctx); err != nil {
+			logger.Error("Failed to close connection", "error", err)
+		}
+	}
+
+	return conn, cleanup, nil
+}
+
 // buildConnectionStringForDB builds connection string for specific database
 func buildConnectionStringForDB(p *PostgresqlDatabase, dbName, password string) string {
-	sslMode := "disable"
-	if p.IsHttps {
-		sslMode = "require"
+	sslMode := p.SslMode
+	if sslMode == "" {
+		sslMode = "disable"
+		if p.IsHttps {
+			sslMode = "require"
+		}
 	}
 
 	return fmt.Sprintf(
