@@ -13,7 +13,13 @@ services:
       dockerfile: Dockerfile
     ports:
       - "4005:4005"
+      - "4006:4006"
     volumes:
       - ./databasus-data:/databasus-data
+    environment:
+      # TLS (optional) - base64-encoded PEM cert and key for HTTPS
+      - TLS_CERT_BASE64=${TLS_CERT_BASE64:-}
+      - TLS_KEY_BASE64=${TLS_KEY_BASE64:-}
+      - TLS_PORT=${TLS_PORT:-4006}
     container_name: databasus-local
     restart: unless-stopped

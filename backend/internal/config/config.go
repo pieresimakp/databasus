@@ -126,6 +126,12 @@ type EnvVariables struct {
 
 	// Application URL (optional) - used for email links
 	DatabasusURL string `env:"DATABASUS_URL"`
+
+	// TLS configuration (optional) - base64-encoded PEM certificate and key
+	TLSCertBase64 string `env:"TLS_CERT_BASE64"`
+	TLSKeyBase64  string `env:"TLS_KEY_BASE64"`
+	TLSPort       string `env:"TLS_PORT"`
+	IsTLSEnabled  bool
 }
 
 var env EnvVariables
@@ -235,6 +241,20 @@ func loadEnvVariables() {
 
 	if env.TestLocalhost == "" {
 		env.TestLocalhost = "localhost"
+	}
+
+	// TLS
+	if env.TLSCertBase64 != "" && env.TLSKeyBase64 != "" {
+		env.IsTLSEnabled = true
+
+		if env.TLSPort == "" {
+			env.TLSPort = "4006"
+		}
+
+		log.Info("TLS is enabled", "port", env.TLSPort)
+	} else if env.TLSCertBase64 != "" || env.TLSKeyBase64 != "" {
+		log.Error("Both TLS_CERT_BASE64 and TLS_KEY_BASE64 must be set for TLS")
+		os.Exit(1)
 	}
 
 	// Valkey
