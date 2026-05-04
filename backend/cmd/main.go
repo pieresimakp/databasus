@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -183,16 +185,72 @@ func startServerWithGracefulShutdown(log *slog.Logger, app *gin.Engine) {
 		host = "127.0.0.1"
 	}
 
-	srv := &http.Server{
-		Addr:    host + ":4005",
-		Handler: app,
-	}
+	var servers []*http.Server
 
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error("listen:", "error", err)
+	if config.GetEnv().IsTLSEnabled {
+		tlsCert, err := decodeTLSCertFromBase64()
+		if err != nil {
+			log.Error("Failed to decode TLS certificate from base64", "error", err)
+			os.Exit(1)
 		}
-	}()
+
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{tlsCert},
+			MinVersion:   tls.VersionTLS12,
+		}
+
+		tlsPort := config.GetEnv().TLSPort
+
+		httpsServer := &http.Server{
+			Addr:      host + ":" + tlsPort,
+			Handler:   app,
+			TLSConfig: tlsConfig,
+		}
+
+		servers = append(servers, httpsServer)
+
+		go func() {
+			log.Info("Starting HTTPS server", "address", httpsServer.Addr)
+
+			if err := httpsServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				log.Error("HTTPS listen:", "error", err)
+			}
+		}()
+
+		// HTTP redirect server on port 4005
+		redirectHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			targetURL := "https://" + r.Host + r.URL.RequestURI()
+			http.Redirect(w, r, targetURL, http.StatusMovedPermanently)
+		})
+
+		httpServer := &http.Server{
+			Addr:    host + ":4005",
+			Handler: redirectHandler,
+		}
+
+		servers = append(servers, httpServer)
+
+		go func() {
+			log.Info("Starting HTTP redirect server", "address", httpServer.Addr)
+
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("HTTP redirect listen:", "error", err)
+			}
+		}()
+	} else {
+		httpServer := &http.Server{
+			Addr:    host + ":4005",
+			Handler: app,
+		}
+
+		servers = append(servers, httpServer)
+
+		go func() {
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("listen:", "error", err)
+			}
+		}()
+	}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
@@ -206,11 +264,33 @@ func startServerWithGracefulShutdown(log *slog.Logger, app *gin.Engine) {
 	// the request it is currently handling
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Error("Server forced to shutdown:", "error", err)
+
+	for _, srv := range servers {
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Error("Server forced to shutdown:", "error", err)
+		}
 	}
 
 	log.Info("Server gracefully stopped")
+}
+
+func decodeTLSCertFromBase64() (tls.Certificate, error) {
+	certPEM, err := base64.StdEncoding.DecodeString(config.GetEnv().TLSCertBase64)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("failed to decode TLS_CERT_BASE64: %w", err)
+	}
+
+	keyPEM, err := base64.StdEncoding.DecodeString(config.GetEnv().TLSKeyBase64)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("failed to decode TLS_KEY_BASE64: %w", err)
+	}
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("failed to parse TLS certificate/key pair: %w", err)
+	}
+
+	return cert, nil
 }
 
 func setUpRoutes(r *gin.Engine) {

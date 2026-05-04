@@ -482,7 +482,7 @@ LABEL org.opencontainers.image.source="https://github.com/databasus/databasus"
 
 RUN chmod +x /app/start.sh
 
-EXPOSE 4005
+EXPOSE 4005 4006
 
 # Volume for PostgreSQL data
 VOLUME ["/databasus-data"]
