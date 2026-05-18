@@ -1,7 +1,6 @@
 package databases
 
 import (
-	"context"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -17,13 +16,8 @@ type DatabaseConnector interface {
 	TestConnection(
 		logger *slog.Logger,
 		encryptor encryption.FieldEncryptor,
+		databaseID uuid.UUID,
 	) error
-
-	GetRawDbSizeMb(
-		ctx context.Context,
-		logger *slog.Logger,
-		encryptor encryption.FieldEncryptor,
-	) (float64, error)
 
 	HideSensitiveData()
 }

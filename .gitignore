@@ -2,13 +2,14 @@ ansible/
 databasus-data/
 .env
 pgdata/
-pgdata-test/
 mysqldata/
 mariadbdata/
 valkey-data/
 victoria-logs-data/
 wal-queue/
 temp/
+docker-compose.yml
+!agent/e2e/docker-compose.yml
 node_modules/
 .idea
 /articles
@@ -17,4 +18,3 @@ node_modules/
 /scripts
 .vscode/settings.json
 .claude
-backend/cleanup_test_db.exe

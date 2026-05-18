@@ -50,11 +50,8 @@ export const EditPostgreSqlSpecificDataComponent = ({
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isConnectionFailed, setIsConnectionFailed] = useState(false);
 
-  const hasAdvancedValues = isRestoreMode
-    ? !!database.postgresql?.isExcludeExtensions ||
-      !!database.postgresql?.isRestoreOwnership ||
-      !!database.postgresql?.isRestorePrivileges
-    : !!database.postgresql?.includeSchemas?.length || !!database.postgresql?.excludeTables?.length;
+  const hasAdvancedValues =
+    !!database.postgresql?.includeSchemas?.length || !!database.postgresql?.isExcludeExtensions;
   const [isShowAdvanced, setShowAdvanced] = useState(hasAdvancedValues);
 
   const [hasAutoAddedPublicSchema, setHasAutoAddedPublicSchema] = useState(false);
@@ -639,39 +636,27 @@ export const EditPostgreSqlSpecificDataComponent = ({
               </div>
             )}
 
-            {!isRestoreMode && (
-              <div className="mb-1 flex w-full items-center">
-                <div className="min-w-[150px]">Exclude tables</div>
-                <Select
-                  mode="tags"
-                  value={editingDatabase.postgresql?.excludeTables || []}
-                  onChange={(values) => {
-                    if (!editingDatabase.postgresql) return;
-
-                    setEditingDatabase({
-                      ...editingDatabase,
-                      postgresql: { ...editingDatabase.postgresql, excludeTables: values },
-                    });
-                  }}
-                  size="small"
-                  className="max-w-[200px] grow"
-                  placeholder="No tables excluded"
-                  tokenSeparators={[',']}
-                />
-
-                <Tooltip
-                  className="cursor-pointer"
-                  title="Tables to exclude from the backup. Use 'tablename' or 'schema.tablename'. Glob patterns are supported (e.g. 'logs_*')."
-                >
-                  <InfoCircleOutlined className="ml-2" style={{ color: 'gray' }} />
-                </Tooltip>
-              </div>
-            )}
-
             {isRestoreMode && (
               <div className="mb-1 flex w-full items-center">
-                <div className="flex min-w-[150px] items-center">
-                  <span>Exclude extensions</span>
+                <div className="min-w-[150px]">Exclude extensions</div>
+                <div className="flex items-center">
+                  <Checkbox
+                    checked={editingDatabase.postgresql?.isExcludeExtensions || false}
+                    onChange={(e) => {
+                      if (!editingDatabase.postgresql) return;
+
+                      setEditingDatabase({
+                        ...editingDatabase,
+                        postgresql: {
+                          ...editingDatabase.postgresql,
+                          isExcludeExtensions: e.target.checked,
+                        },
+                      });
+                    }}
+                  >
+                    Skip extensions
+                  </Checkbox>
+
                   <Tooltip
                     className="cursor-pointer"
                     title="Skip restoring extension definitions (CREATE EXTENSION statements). Enable this if you're restoring to a managed PostgreSQL service where extensions are managed by the provider."
@@ -679,76 +664,6 @@ export const EditPostgreSqlSpecificDataComponent = ({
                     <InfoCircleOutlined className="ml-2" style={{ color: 'gray' }} />
                   </Tooltip>
                 </div>
-                <Checkbox
-                  checked={editingDatabase.postgresql?.isExcludeExtensions || false}
-                  onChange={(e) => {
-                    if (!editingDatabase.postgresql) return;
-
-                    setEditingDatabase({
-                      ...editingDatabase,
-                      postgresql: {
-                        ...editingDatabase.postgresql,
-                        isExcludeExtensions: e.target.checked,
-                      },
-                    });
-                  }}
-                />
-              </div>
-            )}
-
-            {isRestoreMode && (
-              <div className="mb-1 flex w-full items-center">
-                <div className="flex min-w-[150px] items-center">
-                  <span>Restore ownership</span>
-                  <Tooltip
-                    className="cursor-pointer"
-                    title="Apply ALTER OWNER statements from the dump so restored objects keep their original owner. The connection user must be able to assign these roles - typically a superuser."
-                  >
-                    <InfoCircleOutlined className="ml-2" style={{ color: 'gray' }} />
-                  </Tooltip>
-                </div>
-                <Checkbox
-                  checked={editingDatabase.postgresql?.isRestoreOwnership || false}
-                  onChange={(e) => {
-                    if (!editingDatabase.postgresql) return;
-
-                    setEditingDatabase({
-                      ...editingDatabase,
-                      postgresql: {
-                        ...editingDatabase.postgresql,
-                        isRestoreOwnership: e.target.checked,
-                      },
-                    });
-                  }}
-                />
-              </div>
-            )}
-
-            {isRestoreMode && (
-              <div className="mb-1 flex w-full items-center">
-                <div className="flex min-w-[150px] items-center">
-                  <span>Restore privileges</span>
-                  <Tooltip
-                    className="cursor-pointer"
-                    title="Apply GRANT and REVOKE statements from the dump so restored objects keep their original ACLs. The connection user must be able to grant to the referenced roles - typically a superuser."
-                  >
-                    <InfoCircleOutlined className="ml-2" style={{ color: 'gray' }} />
-                  </Tooltip>
-                </div>
-                <Checkbox
-                  checked={editingDatabase.postgresql?.isRestorePrivileges || false}
-                  onChange={(e) => {
-                    if (!editingDatabase.postgresql) return;
-
-                    setEditingDatabase({
-                      ...editingDatabase,
-                      postgresql: {
-                        ...editingDatabase.postgresql,
-                        isRestorePrivileges: e.target.checked,
-                      },
-                    });
-                  }}
-                />
               </div>
             )}
           </>

@@ -27,8 +27,7 @@ type EnvVariables struct {
 	EnvMode   env_utils.EnvMode `env:"ENV_MODE" required:"true"`
 
 	// Internal database
-	DatabaseDsn     string `env:"DATABASE_DSN"      required:"true"`
-	TestDatabaseDsn string `env:"TEST_DATABASE_DSN"`
+	DatabaseDsn string `env:"DATABASE_DSN" required:"true"`
 	// Internal Valkey
 	ValkeyHost     string `env:"VALKEY_HOST"     required:"true"`
 	ValkeyPort     string `env:"VALKEY_PORT"     required:"true"`
@@ -101,18 +100,12 @@ type EnvVariables struct {
 	TestMariadb118Port  string `env:"TEST_MARIADB_118_PORT"`
 	TestMariadb120Port  string `env:"TEST_MARIADB_120_PORT"`
 
-	TestMongodb40Port string `env:"TEST_MONGODB_40_PORT"`
 	TestMongodb42Port string `env:"TEST_MONGODB_42_PORT"`
 	TestMongodb44Port string `env:"TEST_MONGODB_44_PORT"`
 	TestMongodb50Port string `env:"TEST_MONGODB_50_PORT"`
 	TestMongodb60Port string `env:"TEST_MONGODB_60_PORT"`
 	TestMongodb70Port string `env:"TEST_MONGODB_70_PORT"`
 	TestMongodb82Port string `env:"TEST_MONGODB_82_PORT"`
-
-	TestPostgresSslPort string `env:"TEST_POSTGRES_SSL_PORT"`
-	TestMariadbSslPort  string `env:"TEST_MARIADB_SSL_PORT"`
-	TestMysqlSslPort    string `env:"TEST_MYSQL_SSL_PORT"`
-	TestMongodbSslPort  string `env:"TEST_MONGODB_SSL_PORT"`
 
 	// oauth
 	GitHubClientID     string `env:"GITHUB_CLIENT_ID"`
@@ -210,15 +203,6 @@ func loadEnvVariables() {
 			env.IsTesting = true
 			break
 		}
-	}
-
-	if env.IsTesting {
-		if env.TestDatabaseDsn == "" {
-			log.Error("TEST_DATABASE_DSN is empty")
-			os.Exit(1)
-		}
-
-		env.DatabaseDsn = env.TestDatabaseDsn
 	}
 
 	// Check for external database override

@@ -227,8 +227,6 @@ ALTER TABLE marketplace_info_images
     REFERENCES marketplace_info (bot_id);
 ```
 
-For migrations stub generation use Makefile and only then fill manually.
-
 ---
 
 ## Testing

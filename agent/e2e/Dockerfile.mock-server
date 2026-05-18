@@ -1,6 +1,6 @@
 # Mock databasus API server for version checks and binary downloads. Just
 # serves static responses and files from the `artifacts` directory.
-FROM golang:1.26.3-alpine AS build
+FROM golang:1.26.1-alpine AS build
 WORKDIR /app
 COPY mock-server/main.go .
 RUN CGO_ENABLED=0 go build -o mock-server main.go

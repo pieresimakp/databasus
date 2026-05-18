@@ -127,15 +127,13 @@ func (r *RcloneStorage) DeleteFile(encryptor encryption.FieldEncryptor, fileName
 	filePath := r.getFilePath(fileName)
 
 	obj, err := remoteFs.NewObject(ctx, filePath)
-	if errors.Is(err, fs.ErrorObjectNotFound) {
+	if err != nil {
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("failed to look up file in rclone: %w", err)
-	}
 
-	if err := operations.DeleteFile(ctx, obj); err != nil {
-		return fmt.Errorf("failed to delete file via rclone: %w", err)
+	err = obj.Remove(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to delete file from rclone: %w", err)
 	}
 
 	return nil
@@ -146,7 +144,7 @@ func (r *RcloneStorage) Validate(encryptor encryption.FieldEncryptor) error {
 		return errors.New("rclone config content is required")
 	}
 
-	configContent, err := encryptor.Decrypt(r.ConfigContent)
+	configContent, err := encryptor.Decrypt(r.StorageID, r.ConfigContent)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt rclone config content: %w", err)
 	}
@@ -214,7 +212,7 @@ func (r *RcloneStorage) HideSensitiveData() {
 
 func (r *RcloneStorage) EncryptSensitiveData(encryptor encryption.FieldEncryptor) error {
 	if r.ConfigContent != "" {
-		encrypted, err := encryptor.Encrypt(r.ConfigContent)
+		encrypted, err := encryptor.Encrypt(r.StorageID, r.ConfigContent)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt rclone config content: %w", err)
 		}
@@ -236,7 +234,7 @@ func (r *RcloneStorage) getFs(
 	ctx context.Context,
 	encryptor encryption.FieldEncryptor,
 ) (fs.Fs, error) {
-	configContent, err := encryptor.Decrypt(r.ConfigContent)
+	configContent, err := encryptor.Decrypt(r.StorageID, r.ConfigContent)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt rclone config content: %w", err)
 	}

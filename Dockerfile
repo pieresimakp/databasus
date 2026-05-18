@@ -22,7 +22,7 @@ RUN pnpm build
 
 # ========= BUILD BACKEND =========
 # Backend build stage
-FROM --platform=$BUILDPLATFORM golang:1.26.3 AS backend-build
+FROM --platform=$BUILDPLATFORM golang:1.26.1 AS backend-build
 
 # Make TARGET args available early so tools built here match the final image arch
 ARG TARGETOS
@@ -32,7 +32,7 @@ ARG TARGETARCH
 # binary is compiled for the target architecture instead of downloading a
 # prebuilt binary which may have the wrong architecture (causes exec format
 # errors on ARM).
-RUN git clone --depth 1 --branch v3.27.1 https://github.com/pressly/goose.git /tmp/goose && \
+RUN git clone --depth 1 --branch v3.24.3 https://github.com/pressly/goose.git /tmp/goose && \
   cd /tmp/goose/cmd/goose && \
   GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
   go build -o /usr/local/bin/goose . && \
@@ -81,16 +81,16 @@ RUN CGO_ENABLED=0 \
 # so the agent runs on any Linux distro (Alpine, Debian, Ubuntu, RHEL, etc.).
 # APP_VERSION is baked into the binary via -ldflags so the agent can
 # compare its version against the server and auto-update when needed.
-FROM --platform=$BUILDPLATFORM golang:1.26.3 AS agent-build
+FROM --platform=$BUILDPLATFORM golang:1.26.1 AS agent-build
 
 ARG APP_VERSION=dev
 
 WORKDIR /agent
 
-COPY agent/backup/go.mod ./
+COPY agent/go.mod ./
 RUN go mod download
 
-COPY agent/backup/ ./
+COPY agent/ ./
 
 # Build for x86_64 (amd64) — static binary, no glibc dependency
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
@@ -124,8 +124,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       wget ca-certificates gnupg lsb-release sudo gosu curl unzip xz-utils \
-      libncurses5 libncurses6 rclone \
-      libmariadb3; \
+      libncurses5 libncurses6 rclone; \
     wget -qO- https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -; \
     echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
       > /etc/apt/sources.list.d/pgdg.list; \
@@ -159,9 +158,6 @@ RUN groupadd -g 999 postgres || true && \
   useradd -m -s /bin/bash -u 999 -g 999 postgres || true && \
   mkdir -p /databasus-data/pgdata && \
   chown -R postgres:postgres /databasus-data/pgdata
-
-# Create non-root user for the main application process
-RUN useradd -r -s /usr/sbin/nologin -u 65532 databasus
 
 WORKDIR /app
 
@@ -297,12 +293,7 @@ echo "Setting up data directory permissions..."
 mkdir -p /databasus-data/pgdata
 mkdir -p /databasus-data/temp
 mkdir -p /databasus-data/backups
-chown databasus:databasus /databasus-data
-chown -R postgres:postgres /databasus-data/pgdata
-chown -R databasus:databasus /databasus-data/temp /databasus-data/backups
-# Upgrade path: secret.key and instance.json may be owned by root or postgres
-# from older images. Re-own them so the non-root main process can read/write.
-chown databasus:databasus /databasus-data/secret.key /databasus-data/instance.json 2>/dev/null || true
+chown -R postgres:postgres /databasus-data
 chmod 700 /databasus-data/temp
 
 # ========= Start Valkey (internal cache) =========
@@ -451,7 +442,7 @@ if [ -n "\${DANGEROUS_VALKEY_HOST:-}" ]; then
     echo ""
 fi
 
-exec gosu databasus ./main
+exec ./main
 EOF
 
 LABEL org.opencontainers.image.source="https://github.com/databasus/databasus"

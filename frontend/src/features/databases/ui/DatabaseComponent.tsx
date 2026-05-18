@@ -130,16 +130,14 @@ export const DatabaseComponent = ({
 
       {currentTab === 'backups' && (
         <>
-          {!isWalDatabase && (
-            <HealthckeckAttemptsComponent
-              database={database}
-              onVisibilityChange={handleHealthcheckVisibilityChange}
-            />
-          )}
+          <HealthckeckAttemptsComponent
+            database={database}
+            onVisibilityChange={handleHealthcheckVisibilityChange}
+          />
           <BackupsComponent
             database={database}
             isCanManageDBs={isCanManageDBs}
-            isDirectlyUnderTab={isWalDatabase || !isHealthcheckVisible}
+            isDirectlyUnderTab={!isHealthcheckVisible}
             scrollContainerRef={scrollContainerRef}
             onNavigateToBilling={() => setCurrentTab('billing')}
           />

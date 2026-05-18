@@ -20,11 +20,8 @@ export interface PostgresqlDatabase {
 
   // backup settings
   includeSchemas?: string[];
-  excludeTables?: string[];
   cpuCount: number;
 
   // restore settings (not saved to DB)
   isExcludeExtensions?: boolean;
-  isRestoreOwnership?: boolean;
-  isRestorePrivileges?: boolean;
 }

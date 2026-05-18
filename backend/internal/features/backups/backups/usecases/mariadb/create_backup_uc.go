@@ -73,18 +73,9 @@ func (uc *CreateMariadbBackupUsecase) Execute(
 		return nil, fmt.Errorf("database name is required for mariadb-dump backups")
 	}
 
-	decryptedPassword, err := uc.fieldEncryptor.Decrypt(mdb.Password)
+	decryptedPassword, err := uc.fieldEncryptor.Decrypt(db.ID, mdb.Password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt database password: %w", err)
-	}
-
-	rawSizeMB, err := mdb.GetRawDbSizeMb(ctx, uc.logger, uc.fieldEncryptor)
-	if err != nil {
-		uc.logger.Warn("failed to fetch raw db size before backup",
-			"database_id", db.ID,
-			"error", err)
-	} else {
-		backup.BackupRawDbSizeMb = rawSizeMB
 	}
 
 	args := uc.buildMariadbDumpArgs(mdb)
@@ -123,12 +114,6 @@ func (uc *CreateMariadbBackupUsecase) buildMariadbDumpArgs(
 
 	if mdb.HasPrivilege("EVENT") && !mdb.IsExcludeEvents {
 		args = append(args, "--events")
-	}
-
-	if mdb.Database != nil && *mdb.Database != "" {
-		for _, table := range mdb.ExcludeTables {
-			args = append(args, "--ignore-table="+*mdb.Database+"."+table)
-		}
 	}
 
 	args = append(args, "--compress")
@@ -228,10 +213,6 @@ func (uc *CreateMariadbBackupUsecase) streamToStorage(
 			backup.FileName,
 			storageReader,
 		)
-		if saveErr != nil {
-			_ = storageReader.CloseWithError(saveErr)
-			cancel()
-		}
 		saveErrCh <- saveErr
 	}()
 
@@ -255,17 +236,6 @@ func (uc *CreateMariadbBackupUsecase) streamToStorage(
 	copyErr := <-copyResultCh
 	bytesWritten := <-bytesWrittenCh
 	waitErr := cmd.Wait()
-
-	select {
-	case earlySaveErr := <-saveErrCh:
-		if earlySaveErr != nil {
-			_ = zstdWriter.Close()
-			_ = uc.closeWriters(encryptionWriter, storageWriter)
-			return nil, fmt.Errorf("save to storage: %w", earlySaveErr)
-		}
-		saveErrCh <- nil
-	default:
-	}
 
 	select {
 	case <-ctx.Done():

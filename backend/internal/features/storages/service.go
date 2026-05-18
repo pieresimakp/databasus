@@ -69,10 +69,6 @@ func (s *StorageService) SaveStorage(
 		return ErrLocalStorageNotAllowedInCloudMode
 	}
 
-	if storage.Type == StorageTypeRclone && user.Role != users_enums.UserRoleAdmin {
-		return ErrRcloneStorageRequiresAdmin
-	}
-
 	isUpdate := storage.ID != uuid.Nil
 
 	if storage.IsSystem && user.Role != users_enums.UserRoleAdmin {
@@ -290,10 +286,6 @@ func (s *StorageService) TestStorageConnectionDirect(
 	if config.GetEnv().IsCloud && storage.Type == StorageTypeLocal &&
 		user.Role != users_enums.UserRoleAdmin {
 		return ErrLocalStorageNotAllowedInCloudMode
-	}
-
-	if storage.Type == StorageTypeRclone && user.Role != users_enums.UserRoleAdmin {
-		return ErrRcloneStorageRequiresAdmin
 	}
 
 	var usingStorage *Storage

@@ -259,6 +259,7 @@ func (s *RestoreService) validateVersionCompatibility(
 		err := requestDTO.MariadbDatabase.PopulateVersion(
 			s.logger,
 			s.fieldEncryptor,
+			backupDatabase.ID,
 		)
 		if err != nil {
 			return err
@@ -268,6 +269,7 @@ func (s *RestoreService) validateVersionCompatibility(
 		err := requestDTO.MysqlDatabase.PopulateVersion(
 			s.logger,
 			s.fieldEncryptor,
+			backupDatabase.ID,
 		)
 		if err != nil {
 			return err
@@ -277,6 +279,7 @@ func (s *RestoreService) validateVersionCompatibility(
 		err := requestDTO.PostgresqlDatabase.PopulateVersion(
 			s.logger,
 			s.fieldEncryptor,
+			backupDatabase.ID,
 		)
 		if err != nil {
 			return err
@@ -286,6 +289,7 @@ func (s *RestoreService) validateVersionCompatibility(
 		err := requestDTO.MongodbDatabase.PopulateVersion(
 			s.logger,
 			s.fieldEncryptor,
+			backupDatabase.ID,
 		)
 		if err != nil {
 			return err

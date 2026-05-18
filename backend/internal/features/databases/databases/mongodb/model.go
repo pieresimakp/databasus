@@ -14,7 +14,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"gorm.io/gorm"
 
 	"databasus-backend/internal/util/encryption"
 	"databasus-backend/internal/util/tools"
@@ -26,42 +25,20 @@ type MongodbDatabase struct {
 
 	Version tools.MongodbVersion `json:"version" gorm:"type:text;not null"`
 
-	Host                     string   `json:"host"               gorm:"type:text;not null"`
-	Port                     *int     `json:"port"               gorm:"type:int"`
-	Username                 string   `json:"username"           gorm:"type:text;not null"`
-	Password                 string   `json:"password"           gorm:"type:text;not null"`
-	Database                 string   `json:"database"           gorm:"type:text;not null"`
-	AuthDatabase             string   `json:"authDatabase"       gorm:"type:text;not null;default:'admin'"`
-	IsHttps                  bool     `json:"isHttps"            gorm:"type:boolean;default:false"`
-	IsSrv                    bool     `json:"isSrv"              gorm:"column:is_srv;type:boolean;not null;default:false"`
-	IsDirectConnection       bool     `json:"isDirectConnection" gorm:"column:is_direct_connection;type:boolean;not null;default:false"`
-	CpuCount                 int      `json:"cpuCount"           gorm:"column:cpu_count;type:int;not null;default:1"`
-	ExcludeCollections       []string `json:"excludeCollections" gorm:"-"`
-	ExcludeCollectionsString string   `json:"-"                  gorm:"column:exclude_collections;type:text;not null;default:''"`
+	Host               string `json:"host"               gorm:"type:text;not null"`
+	Port               *int   `json:"port"               gorm:"type:int"`
+	Username           string `json:"username"           gorm:"type:text;not null"`
+	Password           string `json:"password"           gorm:"type:text;not null"`
+	Database           string `json:"database"           gorm:"type:text;not null"`
+	AuthDatabase       string `json:"authDatabase"       gorm:"type:text;not null;default:'admin'"`
+	IsHttps            bool   `json:"isHttps"            gorm:"type:boolean;default:false"`
+	IsSrv              bool   `json:"isSrv"              gorm:"column:is_srv;type:boolean;not null;default:false"`
+	IsDirectConnection bool   `json:"isDirectConnection" gorm:"column:is_direct_connection;type:boolean;not null;default:false"`
+	CpuCount           int    `json:"cpuCount"           gorm:"column:cpu_count;type:int;not null;default:1"`
 }
 
 func (m *MongodbDatabase) TableName() string {
 	return "mongodb_databases"
-}
-
-func (m *MongodbDatabase) BeforeSave(_ *gorm.DB) error {
-	if len(m.ExcludeCollections) > 0 {
-		m.ExcludeCollectionsString = strings.Join(m.ExcludeCollections, ",")
-	} else {
-		m.ExcludeCollectionsString = ""
-	}
-
-	return nil
-}
-
-func (m *MongodbDatabase) AfterFind(_ *gorm.DB) error {
-	if m.ExcludeCollectionsString != "" {
-		m.ExcludeCollections = strings.Split(m.ExcludeCollectionsString, ",")
-	} else {
-		m.ExcludeCollections = []string{}
-	}
-
-	return nil
 }
 
 func (m *MongodbDatabase) Validate() error {
@@ -94,16 +71,17 @@ func (m *MongodbDatabase) Validate() error {
 func (m *MongodbDatabase) TestConnection(
 	logger *slog.Logger,
 	encryptor encryption.FieldEncryptor,
+	databaseID uuid.UUID,
 ) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	password, err := decryptPasswordIfNeeded(m.Password, encryptor)
+	password, err := decryptPasswordIfNeeded(m.Password, encryptor, databaseID)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt password: %w", err)
 	}
 
-	uri := m.BuildConnectionURI(password)
+	uri := m.buildConnectionURI(password)
 
 	clientOptions := options.Client().ApplyURI(uri)
 	client, err := mongo.Connect(ctx, clientOptions)
@@ -139,48 +117,6 @@ func (m *MongodbDatabase) TestConnection(
 	return nil
 }
 
-// GetRawDbSizeMb reads dataSize from the dbStats command — the uncompressed
-// total of user data, the closest analog to the relational "raw DB size".
-func (m *MongodbDatabase) GetRawDbSizeMb(
-	ctx context.Context,
-	logger *slog.Logger,
-	encryptor encryption.FieldEncryptor,
-) (float64, error) {
-	if m.Database == "" {
-		return 0, nil
-	}
-
-	password, err := decryptPasswordIfNeeded(m.Password, encryptor)
-	if err != nil {
-		return 0, fmt.Errorf("failed to decrypt password: %w", err)
-	}
-
-	uri := m.BuildConnectionURI(password)
-
-	clientOptions := options.Client().ApplyURI(uri)
-	client, err := mongo.Connect(ctx, clientOptions)
-	if err != nil {
-		return 0, fmt.Errorf("failed to connect to MongoDB: %w", err)
-	}
-	defer func() {
-		if disconnectErr := client.Disconnect(ctx); disconnectErr != nil {
-			logger.Error("Failed to disconnect from MongoDB", "error", disconnectErr)
-		}
-	}()
-
-	result := client.Database(m.Database).RunCommand(ctx, bson.D{{Key: "dbStats", Value: 1}})
-
-	var stats struct {
-		DataSize float64 `bson:"dataSize"`
-	}
-
-	if err := result.Decode(&stats); err != nil {
-		return 0, fmt.Errorf("failed to decode dbStats for MongoDB database '%s': %w", m.Database, err)
-	}
-
-	return stats.DataSize / (1024 * 1024), nil
-}
-
 func (m *MongodbDatabase) HideSensitiveData() {
 	if m == nil {
 		return
@@ -199,7 +135,6 @@ func (m *MongodbDatabase) Update(incoming *MongodbDatabase) {
 	m.IsSrv = incoming.IsSrv
 	m.IsDirectConnection = incoming.IsDirectConnection
 	m.CpuCount = incoming.CpuCount
-	m.ExcludeCollections = incoming.ExcludeCollections
 
 	if incoming.Password != "" {
 		m.Password = incoming.Password
@@ -207,10 +142,11 @@ func (m *MongodbDatabase) Update(incoming *MongodbDatabase) {
 }
 
 func (m *MongodbDatabase) EncryptSensitiveFields(
+	databaseID uuid.UUID,
 	encryptor encryption.FieldEncryptor,
 ) error {
 	if m.Password != "" {
-		encrypted, err := encryptor.Encrypt(m.Password)
+		encrypted, err := encryptor.Encrypt(databaseID, m.Password)
 		if err != nil {
 			return err
 		}
@@ -222,23 +158,25 @@ func (m *MongodbDatabase) EncryptSensitiveFields(
 func (m *MongodbDatabase) PopulateDbData(
 	logger *slog.Logger,
 	encryptor encryption.FieldEncryptor,
+	databaseID uuid.UUID,
 ) error {
-	return m.PopulateVersion(logger, encryptor)
+	return m.PopulateVersion(logger, encryptor, databaseID)
 }
 
 func (m *MongodbDatabase) PopulateVersion(
 	logger *slog.Logger,
 	encryptor encryption.FieldEncryptor,
+	databaseID uuid.UUID,
 ) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	password, err := decryptPasswordIfNeeded(m.Password, encryptor)
+	password, err := decryptPasswordIfNeeded(m.Password, encryptor, databaseID)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt password: %w", err)
 	}
 
-	uri := m.BuildConnectionURI(password)
+	uri := m.buildConnectionURI(password)
 
 	clientOptions := options.Client().ApplyURI(uri)
 	client, err := mongo.Connect(ctx, clientOptions)
@@ -264,13 +202,14 @@ func (m *MongodbDatabase) IsUserReadOnly(
 	ctx context.Context,
 	logger *slog.Logger,
 	encryptor encryption.FieldEncryptor,
+	databaseID uuid.UUID,
 ) (bool, []string, error) {
-	password, err := decryptPasswordIfNeeded(m.Password, encryptor)
+	password, err := decryptPasswordIfNeeded(m.Password, encryptor, databaseID)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to decrypt password: %w", err)
 	}
 
-	uri := m.BuildConnectionURI(password)
+	uri := m.buildConnectionURI(password)
 
 	clientOptions := options.Client().ApplyURI(uri)
 	client, err := mongo.Connect(ctx, clientOptions)
@@ -450,13 +389,14 @@ func (m *MongodbDatabase) CreateReadOnlyUser(
 	ctx context.Context,
 	logger *slog.Logger,
 	encryptor encryption.FieldEncryptor,
+	databaseID uuid.UUID,
 ) (string, string, error) {
-	password, err := decryptPasswordIfNeeded(m.Password, encryptor)
+	password, err := decryptPasswordIfNeeded(m.Password, encryptor, databaseID)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to decrypt password: %w", err)
 	}
 
-	uri := m.BuildConnectionURI(password)
+	uri := m.buildConnectionURI(password)
 
 	clientOptions := options.Client().ApplyURI(uri)
 	client, err := mongo.Connect(ctx, clientOptions)
@@ -511,24 +451,8 @@ func (m *MongodbDatabase) CreateReadOnlyUser(
 	return "", "", errors.New("failed to generate unique username after 3 attempts")
 }
 
-// BuildConnectionURI builds a MongoDB connection URI with the database embedded
-// in the path. Used by the Go driver and the bundled mongodump invocation —
-// embedding the database in the URI lets us drop `--db`, which stricter
-// mongodump versions reject when combined with `--uri`.
-func (m *MongodbDatabase) BuildConnectionURI(password string) string {
-	return m.buildURI(password, true)
-}
-
-// BuildRestoreURI builds a connection URI without the database in the path.
-// mongorestore treats a URI-embedded database as an implicit target rewrite
-// that collides with --nsFrom / --nsTo, silently producing a zero-document
-// restore. Restore must use a database-less URI and rely on the namespace
-// flags exclusively.
-func (m *MongodbDatabase) BuildRestoreURI(password string) string {
-	return m.buildURI(password, false)
-}
-
-func (m *MongodbDatabase) buildURI(password string, includeDatabase bool) string {
+// BuildMongodumpURI builds a URI suitable for mongodump (without database in path)
+func (m *MongodbDatabase) BuildMongodumpURI(password string) string {
 	authDB := m.AuthDatabase
 	if authDB == "" {
 		authDB = "admin"
@@ -544,9 +468,48 @@ func (m *MongodbDatabase) buildURI(password string, includeDatabase bool) string
 		extraParams += "&directConnection=true"
 	}
 
-	dbPath := ""
-	if includeDatabase {
-		dbPath = url.PathEscape(m.Database)
+	if m.IsSrv {
+		return fmt.Sprintf(
+			"mongodb+srv://%s:%s@%s/?authSource=%s&connectTimeoutMS=15000%s",
+			url.QueryEscape(m.Username),
+			url.QueryEscape(password),
+			m.Host,
+			authDB,
+			extraParams,
+		)
+	}
+
+	port := 27017
+	if m.Port != nil {
+		port = *m.Port
+	}
+
+	return fmt.Sprintf(
+		"mongodb://%s:%s@%s:%d/?authSource=%s&connectTimeoutMS=15000%s",
+		url.QueryEscape(m.Username),
+		url.QueryEscape(password),
+		m.Host,
+		port,
+		authDB,
+		extraParams,
+	)
+}
+
+// buildConnectionURI builds a MongoDB connection URI
+func (m *MongodbDatabase) buildConnectionURI(password string) string {
+	authDB := m.AuthDatabase
+	if authDB == "" {
+		authDB = "admin"
+	}
+
+	extraParams := ""
+	if m.IsHttps {
+		extraParams += "&tls=true&tlsInsecure=true"
+	} else {
+		extraParams += "&tls=false"
+	}
+	if m.IsDirectConnection {
+		extraParams += "&directConnection=true"
 	}
 
 	if m.IsSrv {
@@ -555,8 +518,8 @@ func (m *MongodbDatabase) buildURI(password string, includeDatabase bool) string
 			url.QueryEscape(m.Username),
 			url.QueryEscape(password),
 			m.Host,
-			dbPath,
-			url.QueryEscape(authDB),
+			m.Database,
+			authDB,
 			extraParams,
 		)
 	}
@@ -572,8 +535,8 @@ func (m *MongodbDatabase) buildURI(password string, includeDatabase bool) string
 		url.QueryEscape(password),
 		m.Host,
 		port,
-		dbPath,
-		url.QueryEscape(authDB),
+		m.Database,
+		authDB,
 		extraParams,
 	)
 }
@@ -592,28 +555,16 @@ func detectMongodbVersion(ctx context.Context, client *mongo.Client) (tools.Mong
 		return "", errors.New("could not parse MongoDB version from buildInfo")
 	}
 
-	re := regexp.MustCompile(`^(\d+)\.(\d+)`)
+	re := regexp.MustCompile(`^(\d+)\.`)
 	matches := re.FindStringSubmatch(versionStr)
-	if len(matches) < 3 {
+	if len(matches) < 2 {
 		return "", fmt.Errorf("could not parse MongoDB version: %s", versionStr)
 	}
 
-	return mapMongodbVersion(matches[1], matches[2])
-}
+	major := matches[1]
 
-// mapMongodbVersion validates a parsed major.minor against the supported
-// matrix. The bundled MongoDB Database Tools (100.16.1) drop wire-protocol
-// v7, so the minimum supported server version is 4.2 — matching
-// assets/tools/README.md.
-func mapMongodbVersion(major, minor string) (tools.MongodbVersion, error) {
 	switch major {
 	case "4":
-		if minor == "0" || minor == "1" {
-			return "", fmt.Errorf(
-				"unsupported MongoDB version: %s.%s (minimum supported: 4.2)",
-				major, minor,
-			)
-		}
 		return tools.MongodbVersion4, nil
 	case "5":
 		return tools.MongodbVersion5, nil
@@ -625,8 +576,8 @@ func mapMongodbVersion(major, minor string) (tools.MongodbVersion, error) {
 		return tools.MongodbVersion8, nil
 	default:
 		return "", fmt.Errorf(
-			"unsupported MongoDB version: %s.%s (supported: 4.2+, 5.x, 6.x, 7.x, 8.x)",
-			major, minor,
+			"unsupported MongoDB major version: %s (supported: 4.x, 5.x, 6.x, 7.x, 8.x)",
+			major,
 		)
 	}
 }
@@ -756,9 +707,10 @@ func checkBackupPermissions(
 func decryptPasswordIfNeeded(
 	password string,
 	encryptor encryption.FieldEncryptor,
+	databaseID uuid.UUID,
 ) (string, error) {
 	if encryptor == nil {
 		return password, nil
 	}
-	return encryptor.Decrypt(password)
+	return encryptor.Decrypt(databaseID, password)
 }

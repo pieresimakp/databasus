@@ -10,5 +10,4 @@ export interface MariadbDatabase {
   database?: string;
   isHttps: boolean;
   isExcludeEvents?: boolean;
-  excludeTables?: string[];
 }

@@ -9,7 +9,7 @@ import { Button, Input } from 'antd';
 import { useEffect, useState } from 'react';
 
 import { backupConfigApi } from '../../../entity/backups';
-import { type Database, PostgresBackupType, databaseApi } from '../../../entity/databases';
+import { type Database, databaseApi } from '../../../entity/databases';
 import type { UserProfile } from '../../../entity/users';
 import { ToastHelper } from '../../../shared/toast';
 import { ConfirmationComponent } from '../../../shared/ui';
@@ -167,8 +167,6 @@ export const DatabaseConfigComponent = ({
         setIsSaving(false);
       });
   };
-
-  const isWalDatabase = database.postgresql?.backupType === PostgresBackupType.WAL_V1;
 
   return (
     <div className="relative w-full rounded-tr-md rounded-br-md rounded-bl-md bg-white p-3 shadow sm:p-5 dark:bg-gray-800">
@@ -336,38 +334,33 @@ export const DatabaseConfigComponent = ({
       </div>
 
       <div className="flex flex-col gap-6 lg:flex-row lg:flex-wrap lg:gap-10">
-        {!isWalDatabase && (
-          <div className="w-full lg:w-[400px]">
-            <div className="mt-5 flex items-center font-bold">
-              <div>Healthcheck settings</div>
+        <div className="w-full lg:w-[400px]">
+          <div className="mt-5 flex items-center font-bold">
+            <div>Healthcheck settings</div>
 
-              {!isEditHealthcheckSettings && isCanManageDBs ? (
-                <div
-                  className="ml-2 h-4 w-4 cursor-pointer"
-                  onClick={() => startEdit('healthcheck')}
-                >
-                  <img src="/icons/pen-gray.svg" />
-                </div>
-              ) : (
-                <div />
-              )}
-            </div>
-
-            <div className="mt-1 text-sm">
-              {isEditHealthcheckSettings ? (
-                <EditHealthcheckConfigComponent
-                  databaseId={database.id}
-                  onClose={() => {
-                    setIsEditHealthcheckSettings(false);
-                    loadSettings();
-                  }}
-                />
-              ) : (
-                <ShowHealthcheckConfigComponent databaseId={database.id} />
-              )}
-            </div>
+            {!isEditHealthcheckSettings && isCanManageDBs ? (
+              <div className="ml-2 h-4 w-4 cursor-pointer" onClick={() => startEdit('healthcheck')}>
+                <img src="/icons/pen-gray.svg" />
+              </div>
+            ) : (
+              <div />
+            )}
           </div>
-        )}
+
+          <div className="mt-1 text-sm">
+            {isEditHealthcheckSettings ? (
+              <EditHealthcheckConfigComponent
+                databaseId={database.id}
+                onClose={() => {
+                  setIsEditHealthcheckSettings(false);
+                  loadSettings();
+                }}
+              />
+            ) : (
+              <ShowHealthcheckConfigComponent databaseId={database.id} />
+            )}
+          </div>
+        </div>
 
         <div className="w-full lg:w-[400px]">
           <div className="mt-5 flex items-center font-bold">

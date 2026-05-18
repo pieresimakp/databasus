@@ -4,8 +4,6 @@
 image:
   repository: databasus/databasus
   tag: null
-  # When set, overrides `tag` and pins to an immutable digest (e.g. "sha256:abc...").
-  digest: ""
   pullPolicy: Always
 
 imagePullSecrets: []
@@ -16,28 +14,6 @@ replicaCount: 1
 # RootCA setup, need name of secret in same namespace
 customRootCA: ""
 
-# Extra environment variables to inject into the databasus container.
-# Accepts the standard Kubernetes EnvVar shape (value or valueFrom).
-# Note: env values must be strings — use quoted "true"/"false" rather than bare
-# booleans, and pass `--set-string` on the CLI to avoid Kubernetes rejecting
-# non-string values.
-extraEnv: []
-# - name: IS_DISABLE_ANONYMOUS_TELEMETRY
-#   value: "true"
-# - name: SOME_TOKEN
-#   valueFrom:
-#     secretKeyRef:
-#       name: databasus-extras
-#       key: token
-
-# Extra envFrom sources mounted into the databasus container.
-# Accepts the standard Kubernetes EnvFromSource shape.
-extraEnvFrom: []
-# - secretRef:
-#     name: databasus-extras
-# - configMapRef:
-#     name: databasus-extras-cm
-
 # Service configuration
 service:
   type: ClusterIP
@@ -47,16 +23,6 @@ service:
   # Headless service for StatefulSet
   headless:
     enabled: true
-# Security context for the pod (e.g. fsGroup for volume permissions)
-# NOTE: The entrypoint runs as root to bootstrap PostgreSQL and Valkey,
-# then drops privileges to a non-root user via gosu. Do not set
-# runAsNonRoot or runAsUser here -- it will prevent the container from starting.
-podSecurityContext: {}
-
-# Security context for the databasus container
-# See podSecurityContext note above regarding root requirement.
-securityContext: {}
-
 # Resource limits and requests
 resources:
   requests:

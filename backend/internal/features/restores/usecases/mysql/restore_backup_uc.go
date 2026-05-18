@@ -129,7 +129,7 @@ func (uc *RestoreMysqlBackupUsecase) restoreFromStorage(
 	}()
 
 	fieldEncryptor := util_encryption.GetFieldEncryptor()
-	decryptedPassword, err := fieldEncryptor.Decrypt(password)
+	decryptedPassword, err := fieldEncryptor.Decrypt(database.ID, password)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt password: %w", err)
 	}

@@ -78,7 +78,7 @@ func Test_TestConnection_PasswordContainingSpaces_TestedSuccessfully(t *testing.
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	err = pgModel.TestConnection(logger, nil)
+	err = pgModel.TestConnection(logger, nil, uuid.New())
 	assert.NoError(t, err)
 }
 
@@ -148,7 +148,7 @@ func Test_TestConnection_InsufficientPermissions_ReturnsError(t *testing.T) {
 
 			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-			err = pgModel.TestConnection(logger, nil)
+			err = pgModel.TestConnection(logger, nil, uuid.New())
 			assert.Error(t, err)
 			if err != nil {
 				assert.Contains(t, err.Error(), "insufficient permissions")
@@ -235,7 +235,7 @@ func Test_TestConnection_SufficientPermissions_Success(t *testing.T) {
 
 			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-			err = pgModel.TestConnection(logger, nil)
+			err = pgModel.TestConnection(logger, nil, uuid.New())
 			assert.NoError(t, err)
 		})
 	}
@@ -267,7 +267,7 @@ func Test_IsUserReadOnly_AdminUser_ReturnsFalse(t *testing.T) {
 			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 			ctx := t.Context()
 
-			isReadOnly, privileges, err := pgModel.IsUserReadOnly(ctx, logger, nil)
+			isReadOnly, privileges, err := pgModel.IsUserReadOnly(ctx, logger, nil, uuid.New())
 			assert.NoError(t, err)
 			assert.False(t, isReadOnly, "Admin user should not be read-only")
 			assert.NotEmpty(t, privileges, "Admin user should have privileges")
@@ -294,7 +294,7 @@ func Test_IsUserReadOnly_ReadOnlyUser_ReturnsTrue(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	ctx := t.Context()
 
-	username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil)
+	username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil, uuid.New())
 	assert.NoError(t, err)
 
 	readOnlyModel := &PostgresqlDatabase{
@@ -308,7 +308,7 @@ func Test_IsUserReadOnly_ReadOnlyUser_ReturnsTrue(t *testing.T) {
 		CpuCount: 1,
 	}
 
-	isReadOnly, privileges, err := readOnlyModel.IsUserReadOnly(ctx, logger, nil)
+	isReadOnly, privileges, err := readOnlyModel.IsUserReadOnly(ctx, logger, nil, uuid.New())
 	assert.NoError(t, err)
 	assert.True(t, isReadOnly, "Read-only user should be read-only")
 	assert.Empty(t, privileges, "Read-only user should have no write privileges")
@@ -359,7 +359,7 @@ func Test_CreateReadOnlyUser_UserCanReadButNotWrite(t *testing.T) {
 			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 			ctx := t.Context()
 
-			username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil)
+			username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil, uuid.New())
 			assert.NoError(t, err)
 			assert.NotEmpty(t, username)
 			assert.NotEmpty(t, password)
@@ -379,6 +379,7 @@ func Test_CreateReadOnlyUser_UserCanReadButNotWrite(t *testing.T) {
 				ctx,
 				logger,
 				nil,
+				uuid.New(),
 			)
 			assert.NoError(t, err)
 			assert.True(t, isReadOnly, "Created user should be read-only")
@@ -437,7 +438,7 @@ func Test_ReadOnlyUser_FutureTables_HaveSelectPermission(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	ctx := t.Context()
 
-	username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil)
+	username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil, uuid.New())
 	assert.NoError(t, err)
 
 	_, err = container.DB.Exec(`
@@ -490,7 +491,7 @@ func Test_ReadOnlyUser_MultipleSchemas_AllAccessible(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	ctx := t.Context()
 
-	username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil)
+	username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil, uuid.New())
 	assert.NoError(t, err)
 
 	readOnlyDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
@@ -565,7 +566,7 @@ func Test_CreateReadOnlyUser_DatabaseNameWithDash_Success(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	ctx := t.Context()
 
-	username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil)
+	username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil, uuid.New())
 	assert.NoError(t, err)
 	assert.NotEmpty(t, username)
 	assert.NotEmpty(t, password)
@@ -631,7 +632,7 @@ func Test_CreateReadOnlyUser_WithPublicSchema_Success(t *testing.T) {
 			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 			ctx := t.Context()
 
-			username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil)
+			username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil, uuid.New())
 			assert.NoError(t, err)
 			assert.NotEmpty(t, username)
 			assert.NotEmpty(t, password)
@@ -651,6 +652,7 @@ func Test_CreateReadOnlyUser_WithPublicSchema_Success(t *testing.T) {
 				ctx,
 				logger,
 				nil,
+				uuid.New(),
 			)
 			assert.NoError(t, err)
 			assert.True(t, isReadOnly, "User should be read-only")
@@ -738,7 +740,7 @@ func Test_CreateReadOnlyUser_WithoutPublicSchema_Success(t *testing.T) {
 			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 			ctx := t.Context()
 
-			username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil)
+			username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil, uuid.New())
 			assert.NoError(t, err, "CreateReadOnlyUser should succeed without public schema")
 			assert.NotEmpty(t, username)
 			assert.NotEmpty(t, password)
@@ -758,6 +760,7 @@ func Test_CreateReadOnlyUser_WithoutPublicSchema_Success(t *testing.T) {
 				ctx,
 				logger,
 				nil,
+				uuid.New(),
 			)
 			assert.NoError(t, err)
 			assert.True(t, isReadOnly, "User should be read-only")
@@ -904,7 +907,7 @@ func Test_CreateReadOnlyUser_PublicSchemaExistsButNoPermissions_ReturnsError(t *
 			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 			ctx := t.Context()
 
-			username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil)
+			username, password, err := pgModel.CreateReadOnlyUser(ctx, logger, nil, uuid.New())
 			assert.Error(
 				t,
 				err,
@@ -1325,6 +1328,7 @@ func Test_CreateReadOnlyUser_TablesCreatedByDifferentUser_ReadOnlyUserCanRead(t 
 		ctx,
 		logger,
 		nil,
+		uuid.New(),
 	)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, readonlyUsername)
@@ -1491,6 +1495,7 @@ func Test_CreateReadOnlyUser_WithIncludeSchemas_OnlyGrantsAccessToSpecifiedSchem
 		ctx,
 		logger,
 		nil,
+		uuid.New(),
 	)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, readonlyUsername)
@@ -1579,31 +1584,6 @@ func Test_CreateReadOnlyUser_WithIncludeSchemas_OnlyGrantsAccessToSpecifiedSchem
 		"permission denied",
 		"Read-only user should NOT access tables in excluded schemas",
 	)
-}
-
-func Test_GetRawDbSizeMb_Postgresql_ReturnsPositiveSize(t *testing.T) {
-	env := config.GetEnv()
-	container := connectToPostgresContainer(t, env.TestPostgres16Port)
-	defer container.DB.Close()
-
-	tableName := fmt.Sprintf("size_test_%s", uuid.New().String()[:8])
-	_, err := container.DB.Exec(fmt.Sprintf(`
-		CREATE TABLE %s (id SERIAL PRIMARY KEY, payload TEXT NOT NULL);
-		INSERT INTO %s (payload) SELECT repeat('x', 1024) FROM generate_series(1, 10000);
-	`, tableName, tableName))
-	assert.NoError(t, err)
-	defer func() {
-		_, _ = container.DB.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
-	}()
-
-	pgModel := createPostgresModel(container)
-	assert.NotNil(t, pgModel)
-
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-
-	sizeMB, err := pgModel.GetRawDbSizeMb(t.Context(), logger, nil)
-	assert.NoError(t, err)
-	assert.Greater(t, sizeMB, 0.0, "raw db size should be > 0 after inserting data")
 }
 
 func connectToPostgresContainer(t *testing.T, port string) *PostgresContainer {

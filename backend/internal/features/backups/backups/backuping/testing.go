@@ -3,7 +3,6 @@ package backuping
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -97,7 +96,6 @@ func CreateTestScheduler(billingService BillingService) *BackupsScheduler {
 		time.Now().UTC(),
 		logger.GetLogger(),
 		make(map[uuid.UUID]BackupToNodeRelation),
-		sync.Mutex{},
 		CreateTestBackuperNode(),
 		atomic.Bool{},
 	}
