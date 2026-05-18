@@ -538,9 +538,11 @@ func Test_ReportError_WithMissingErrorField_ReturnsBadRequest(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func Test_GetNextFullBackupTime_WithValidToken_NoFullBackup_ReturnsNull(t *testing.T) {
+func Test_GetNextFullBackupTime_NoFullBackup_ReturnsNowSoAgentRunsImmediately(t *testing.T) {
 	router, db, storage, agentToken, _ := createWalTestSetup(t)
 	defer removeWalTestSetup(db, storage)
+
+	now := time.Now().UTC()
 
 	var response backups_dto.GetNextFullBackupTimeResponse
 	test_utils.MakeGetRequestAndUnmarshal(
@@ -552,7 +554,53 @@ func Test_GetNextFullBackupTime_WithValidToken_NoFullBackup_ReturnsNull(t *testi
 		&response,
 	)
 
-	assert.Nil(t, response.NextFullBackupTime, "should be nil when no full backup exists")
+	require.NotNil(t, response.NextFullBackupTime,
+		"nil is reserved for disabled backups; first run must return a concrete time")
+	assert.WithinDuration(t, now, response.NextFullBackupTime.UTC(), 5*time.Second,
+		"first run should return ~now so the agent triggers immediately")
+}
+
+func Test_GetNextFullBackupTime_WhenBackupsDisabled_ReturnsNull(t *testing.T) {
+	router, db, storage, agentToken, ownerToken := createWalTestSetup(t)
+	defer removeWalTestSetup(db, storage)
+
+	setBackupsEnabled(t, router, db.ID, ownerToken, false)
+
+	var response backups_dto.GetNextFullBackupTimeResponse
+	test_utils.MakeGetRequestAndUnmarshal(
+		t,
+		router,
+		"/api/v1/backups/postgres/wal/next-full-backup-time",
+		agentToken,
+		http.StatusOK,
+		&response,
+	)
+
+	assert.Nil(t, response.NextFullBackupTime,
+		"disabled backups must return nil so the agent skips this cycle")
+}
+
+func Test_GetNextFullBackupTime_WhenBackupsDisabledWithExistingFullBackup_ReturnsNull(t *testing.T) {
+	router, db, storage, agentToken, ownerToken := createWalTestSetup(t)
+	defer removeWalTestSetup(db, storage)
+
+	uploadBasebackup(t, router, agentToken,
+		"000000010000000100000001", "000000010000000100000010")
+
+	setBackupsEnabled(t, router, db.ID, ownerToken, false)
+
+	var response backups_dto.GetNextFullBackupTimeResponse
+	test_utils.MakeGetRequestAndUnmarshal(
+		t,
+		router,
+		"/api/v1/backups/postgres/wal/next-full-backup-time",
+		agentToken,
+		http.StatusOK,
+		&response,
+	)
+
+	assert.Nil(t, response.NextFullBackupTime,
+		"disabled backups must return nil even when a prior full backup exists")
 }
 
 func Test_GetNextFullBackupTime_WithValidToken_HasFullBackup_ReturnsTime(t *testing.T) {
@@ -1566,12 +1614,12 @@ func updateLastFullBackupTime(t *testing.T, databaseID uuid.UUID, createdAt time
 	}
 }
 
-func setEncryption(
+func mutateBackupConfig(
 	t *testing.T,
 	router *gin.Engine,
 	databaseID uuid.UUID,
 	ownerToken string,
-	encryption backups_config.BackupEncryption,
+	mutate func(*backups_config.BackupConfig),
 ) {
 	t.Helper()
 
@@ -1583,7 +1631,7 @@ func setEncryption(
 		http.StatusOK, &cfg,
 	)
 
-	cfg.Encryption = encryption
+	mutate(&cfg)
 
 	test_utils.MakePostRequestAndUnmarshal(
 		t, router,
@@ -1594,24 +1642,32 @@ func setEncryption(
 	)
 }
 
+func setEncryption(
+	t *testing.T,
+	router *gin.Engine,
+	databaseID uuid.UUID,
+	ownerToken string,
+	encryption backups_config.BackupEncryption,
+) {
+	mutateBackupConfig(t, router, databaseID, ownerToken, func(cfg *backups_config.BackupConfig) {
+		cfg.Encryption = encryption
+	})
+}
+
+func setBackupsEnabled(
+	t *testing.T,
+	router *gin.Engine,
+	databaseID uuid.UUID,
+	ownerToken string,
+	enabled bool,
+) {
+	mutateBackupConfig(t, router, databaseID, ownerToken, func(cfg *backups_config.BackupConfig) {
+		cfg.IsBackupsEnabled = enabled
+	})
+}
+
 func setHourlyInterval(t *testing.T, router *gin.Engine, databaseID uuid.UUID, ownerToken string) {
-	t.Helper()
-
-	var cfg backups_config.BackupConfig
-	test_utils.MakeGetRequestAndUnmarshal(
-		t, router,
-		"/api/v1/backup-configs/database/"+databaseID.String(),
-		"Bearer "+ownerToken,
-		http.StatusOK, &cfg,
-	)
-
-	cfg.BackupInterval = &intervals.Interval{Interval: intervals.IntervalHourly}
-
-	test_utils.MakePostRequestAndUnmarshal(
-		t, router,
-		"/api/v1/backup-configs/save",
-		"Bearer "+ownerToken,
-		cfg,
-		http.StatusOK, &cfg,
-	)
+	mutateBackupConfig(t, router, databaseID, ownerToken, func(cfg *backups_config.BackupConfig) {
+		cfg.BackupInterval = &intervals.Interval{Interval: intervals.IntervalHourly}
+	})
 }

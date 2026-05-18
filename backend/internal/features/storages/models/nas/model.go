@@ -284,7 +284,7 @@ func (n *NASStorage) HideSensitiveData() {
 
 func (n *NASStorage) EncryptSensitiveData(encryptor encryption.FieldEncryptor) error {
 	if n.Password != "" {
-		encrypted, err := encryptor.Encrypt(n.StorageID, n.Password)
+		encrypted, err := encryptor.Encrypt(n.Password)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt NAS password: %w", err)
 		}
@@ -321,7 +321,7 @@ func (n *NASStorage) createSessionWithContext(
 		return nil, err
 	}
 
-	password, err := encryptor.Decrypt(n.StorageID, n.Password)
+	password, err := encryptor.Decrypt(n.Password)
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("failed to decrypt NAS password: %w", err)

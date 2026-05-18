@@ -811,19 +811,19 @@ func (s *DatabaseService) CreateReadOnlyUser(
 	switch usingDatabase.Type {
 	case DatabaseTypePostgres:
 		username, password, err = usingDatabase.Postgresql.CreateReadOnlyUser(
-			ctx, s.logger, s.fieldEncryptor, usingDatabase.ID,
+			ctx, s.logger, s.fieldEncryptor,
 		)
 	case DatabaseTypeMysql:
 		username, password, err = usingDatabase.Mysql.CreateReadOnlyUser(
-			ctx, s.logger, s.fieldEncryptor, usingDatabase.ID,
+			ctx, s.logger, s.fieldEncryptor,
 		)
 	case DatabaseTypeMariadb:
 		username, password, err = usingDatabase.Mariadb.CreateReadOnlyUser(
-			ctx, s.logger, s.fieldEncryptor, usingDatabase.ID,
+			ctx, s.logger, s.fieldEncryptor,
 		)
 	case DatabaseTypeMongodb:
 		username, password, err = usingDatabase.Mongodb.CreateReadOnlyUser(
-			ctx, s.logger, s.fieldEncryptor, usingDatabase.ID,
+			ctx, s.logger, s.fieldEncryptor,
 		)
 	default:
 		return "", "", errors.New("read-only user creation not supported for this database type")

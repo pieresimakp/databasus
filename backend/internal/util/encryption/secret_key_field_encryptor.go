@@ -3,14 +3,11 @@ package encryption
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/hmac"
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/google/uuid"
 
 	"databasus-backend/internal/features/encryption/secrets"
 )
@@ -21,7 +18,7 @@ type SecretKeyFieldEncryptor struct {
 	secretKeyService *secrets.SecretKeyService
 }
 
-func (e *SecretKeyFieldEncryptor) Encrypt(itemID uuid.UUID, plaintext string) (string, error) {
+func (e *SecretKeyFieldEncryptor) Encrypt(plaintext string) (string, error) {
 	if plaintext == "" {
 		return "", nil
 	}
@@ -45,7 +42,10 @@ func (e *SecretKeyFieldEncryptor) Encrypt(itemID uuid.UUID, plaintext string) (s
 		return "", fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	nonce := e.deriveNonce(itemID, masterKey, gcm.NonceSize())
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", fmt.Errorf("failed to generate nonce: %w", err)
+	}
 
 	ciphertext := gcm.Seal(nil, nonce, []byte(plaintext), nil)
 
@@ -55,7 +55,7 @@ func (e *SecretKeyFieldEncryptor) Encrypt(itemID uuid.UUID, plaintext string) (s
 	return fmt.Sprintf("%s%s:%s", encryptedPrefix, nonceBase64, ciphertextBase64), nil
 }
 
-func (e *SecretKeyFieldEncryptor) Decrypt(itemID uuid.UUID, ciphertext string) (string, error) {
+func (e *SecretKeyFieldEncryptor) Decrypt(ciphertext string) (string, error) {
 	if ciphertext == "" {
 		return "", nil
 	}
@@ -107,15 +107,4 @@ func (e *SecretKeyFieldEncryptor) Decrypt(itemID uuid.UUID, ciphertext string) (
 
 func (e *SecretKeyFieldEncryptor) isEncrypted(value string) bool {
 	return strings.HasPrefix(value, encryptedPrefix)
-}
-
-func (e *SecretKeyFieldEncryptor) deriveNonce(
-	itemID uuid.UUID,
-	masterKey string,
-	nonceSize int,
-) []byte {
-	h := hmac.New(sha256.New, []byte(masterKey))
-	h.Write(itemID[:])
-	hash := h.Sum(nil)
-	return hash[:nonceSize]
 }

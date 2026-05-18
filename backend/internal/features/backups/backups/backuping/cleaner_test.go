@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"databasus-backend/internal/config"
 	backups_core "databasus-backend/internal/features/backups/backups/core"
@@ -436,7 +438,9 @@ func Test_CleanExceededBackups_WithZeroStorageLimit_RemovesAllBackups(t *testing
 		assert.NoError(t, err)
 	}
 
-	// StorageGB=0 means no storage allowed — all backups should be removed
+	// StorageGB=0 means no storage allowed — non-WAL backups are deleted to zero.
+	// (WAL databases keep their latest full backup via the WAL-specific guard, but
+	// non-WAL retention has no such requirement.)
 	mockBilling := &mockBillingService{
 		subscription: &billing_models.Subscription{StorageGB: 0, Status: billing_models.StatusActive},
 	}
@@ -1298,6 +1302,315 @@ func Test_CleanStaleUploadedBasebackups_CleansStorageFiles(t *testing.T) {
 	assert.Equal(t, backups_core.BackupStatusFailed, updated.Status)
 	assert.NotNil(t, updated.FailMessage)
 	assert.Contains(t, *updated.FailMessage, "finalization timed out")
+}
+
+// Reproduces issue #533: when the cleaner deletes the only completed full WAL backup,
+// the agent's chain-validity check immediately reports the chain broken and triggers a
+// new pg_basebackup. That new backup ages past the grace period, the cleaner deletes it
+// too, and the loop never stops. The fix is for the cleaner to keep the latest completed
+// full WAL backup regardless of retention policy.
+func Test_CleanByRetentionPolicy_DoesNotDeleteOnlyCompletedFullWalBackup(t *testing.T) {
+	router := CreateTestRouter()
+	owner := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	workspace := workspaces_testing.CreateTestWorkspace("Test Workspace", owner, router)
+	storage := storages.CreateTestStorage(workspace.ID)
+	notifier := notifiers.CreateTestNotifier(workspace.ID)
+	database := databases.CreateTestPostgresWalDatabase(workspace.ID, notifier)
+
+	defer func() {
+		backups, _ := backupRepository.FindByDatabaseID(database.ID)
+		for _, backup := range backups {
+			backupRepository.DeleteByID(backup.ID)
+		}
+
+		databases.RemoveTestDatabase(database)
+		time.Sleep(50 * time.Millisecond)
+		notifiers.RemoveTestNotifier(notifier)
+		storages.RemoveTestStorage(storage.ID)
+		workspaces_testing.RemoveTestWorkspace(workspace, router)
+	}()
+
+	interval := createTestInterval()
+
+	backupConfig := &backups_config.BackupConfig{
+		DatabaseID:          database.ID,
+		IsBackupsEnabled:    true,
+		RetentionPolicyType: backups_config.RetentionPolicyTypeTimePeriod,
+		RetentionTimePeriod: period.PeriodDay,
+		StorageID:           &storage.ID,
+		BackupIntervalID:    interval.ID,
+		BackupInterval:      interval,
+		Encryption:          backups_config.BackupEncryptionNone,
+	}
+	_, err := backups_config.GetBackupConfigService().SaveBackupConfig(backupConfig)
+	assert.NoError(t, err)
+
+	walBackupType := backups_core.PgWalBackupTypeFullBackup
+	stopSegment := "000000010000000000000005"
+	fullBackup := &backups_core.Backup{
+		ID:                             uuid.New(),
+		DatabaseID:                     database.ID,
+		StorageID:                      storage.ID,
+		Status:                         backups_core.BackupStatusCompleted,
+		PgWalBackupType:                &walBackupType,
+		PgFullBackupWalStopSegmentName: &stopSegment,
+		BackupSizeMb:                   100,
+		CreatedAt:                      time.Now().UTC().Add(-2 * 24 * time.Hour),
+	}
+	err = backupRepository.Save(fullBackup)
+	assert.NoError(t, err)
+
+	cleaner := GetBackupCleaner()
+	err = cleaner.cleanByRetentionPolicy(testLogger())
+	assert.NoError(t, err)
+
+	survivor, err := backupRepository.FindLastCompletedFullWalBackupByDatabaseID(database.ID)
+	assert.NoError(t, err)
+	assert.NotNil(
+		t,
+		survivor,
+		"cleaner deleted the only completed full WAL backup; agent's chain check will now report no_full_backup and trigger a new pg_basebackup (issue #533)",
+	)
+}
+
+func Test_CleanByTimePeriod_WhenWalBackup_KeepsLatestFullBackup_DeletesOldFullBackupsWithSegments(t *testing.T) {
+	router, database, storage, cleanup := createWalRetentionFixture(t, backups_config.RetentionPolicyTypeTimePeriod)
+	defer cleanup()
+	_ = router
+
+	now := time.Now().UTC()
+
+	oldFull, oldSegs := saveWalFullBackupWithSegments(t, database.ID, storage.ID, now.Add(-3*24*time.Hour), 3)
+	newFull, newSegs := saveWalFullBackupWithSegments(t, database.ID, storage.ID, now.Add(-90*time.Minute), 2)
+
+	cleaner := GetBackupCleaner()
+	err := cleaner.cleanByRetentionPolicy(testLogger())
+	assert.NoError(t, err)
+
+	assertBackupGone(t, oldFull.ID, "old full backup must be deleted with its set")
+	for _, seg := range oldSegs {
+		assertBackupGone(t, seg.ID, "WAL segments must be deleted with their full backup")
+	}
+
+	assertBackupExists(t, newFull.ID, "latest full backup must survive")
+	for _, seg := range newSegs {
+		assertBackupExists(t, seg.ID, "WAL segments of the latest full backup must survive")
+	}
+}
+
+func Test_CleanByCount_WhenWalBackup_KeepsNMostRecentFullBackups(t *testing.T) {
+	router, database, storage, cleanup := createWalRetentionFixture(t, backups_config.RetentionPolicyTypeCount)
+	defer cleanup()
+	setRetentionCount(t, router, database.ID, 2)
+
+	now := time.Now().UTC()
+
+	oldestFull, oldestSegs := saveWalFullBackupWithSegments(t, database.ID, storage.ID, now.Add(-5*24*time.Hour), 2)
+	middleFull, middleSegs := saveWalFullBackupWithSegments(t, database.ID, storage.ID, now.Add(-3*24*time.Hour), 2)
+	newestFull, newestSegs := saveWalFullBackupWithSegments(t, database.ID, storage.ID, now.Add(-90*time.Minute), 2)
+
+	cleaner := GetBackupCleaner()
+	err := cleaner.cleanByRetentionPolicy(testLogger())
+	assert.NoError(t, err)
+
+	assertBackupGone(t, oldestFull.ID, "oldest full backup must be deleted")
+	for _, seg := range oldestSegs {
+		assertBackupGone(t, seg.ID, "WAL segments of the oldest full backup must be deleted")
+	}
+
+	for _, b := range append([]*backups_core.Backup{middleFull, newestFull}, append(middleSegs, newestSegs...)...) {
+		assertBackupExists(t, b.ID, "two newest full backups and their WAL segments must survive count=2 retention")
+	}
+}
+
+func Test_CleanExceededStorage_WhenWalBackup_DeletesFullBackupAndItsSegmentsToFreeSpace(t *testing.T) {
+	enableCloud(t)
+	router, database, storage, cleanup := createWalRetentionFixture(t, backups_config.RetentionPolicyTypeTimePeriod)
+	defer cleanup()
+	_ = router
+
+	now := time.Now().UTC()
+
+	// Two full backups at ~600MB each (basebackup 500MB + 2 segments x 50MB), limit = 1GB.
+	// Cleaner must delete the oldest full backup together with its WAL segments,
+	// not just one row at a time.
+	oldFull, oldSegs := saveSizedWalFullBackupWithSegments(
+		t,
+		database.ID,
+		storage.ID,
+		now.Add(-5*time.Hour),
+		500,
+		[]float64{50, 50},
+	)
+	newFull, newSegs := saveSizedWalFullBackupWithSegments(
+		t,
+		database.ID,
+		storage.ID,
+		now.Add(-90*time.Minute),
+		500,
+		[]float64{50, 50},
+	)
+
+	mockBilling := &mockBillingService{
+		subscription: &billing_models.Subscription{StorageGB: 1, Status: billing_models.StatusActive},
+	}
+	cleaner := CreateTestBackupCleaner(mockBilling)
+	err := cleaner.cleanExceededStorageBackups(testLogger())
+	assert.NoError(t, err)
+
+	assertBackupGone(t, oldFull.ID, "oldest full backup must be deleted to free space")
+	for _, seg := range oldSegs {
+		assertBackupGone(t, seg.ID, "WAL segments must be deleted with their full backup, not orphaned")
+	}
+
+	assertBackupExists(t, newFull.ID, "latest full backup must survive")
+	for _, seg := range newSegs {
+		assertBackupExists(t, seg.ID, "WAL segments of the latest full backup must survive")
+	}
+}
+
+func createWalRetentionFixture(
+	t *testing.T,
+	policy backups_config.RetentionPolicyType,
+) (*gin.Engine, *databases.Database, *storages.Storage, func()) {
+	t.Helper()
+
+	router := CreateTestRouter()
+	owner := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	workspace := workspaces_testing.CreateTestWorkspace("Test Workspace", owner, router)
+	storage := storages.CreateTestStorage(workspace.ID)
+	notifier := notifiers.CreateTestNotifier(workspace.ID)
+	database := databases.CreateTestPostgresWalDatabase(workspace.ID, notifier)
+
+	interval := createTestInterval()
+
+	cfg := &backups_config.BackupConfig{
+		DatabaseID:          database.ID,
+		IsBackupsEnabled:    true,
+		RetentionPolicyType: policy,
+		RetentionTimePeriod: period.PeriodDay,
+		RetentionCount:      2,
+		StorageID:           &storage.ID,
+		BackupIntervalID:    interval.ID,
+		BackupInterval:      interval,
+		Encryption:          backups_config.BackupEncryptionEncrypted,
+	}
+	_, err := backups_config.GetBackupConfigService().SaveBackupConfig(cfg)
+	require.NoError(t, err)
+
+	cleanup := func() {
+		backups, _ := backupRepository.FindByDatabaseID(database.ID)
+		for _, backup := range backups {
+			_ = backupRepository.DeleteByID(backup.ID)
+		}
+
+		databases.RemoveTestDatabase(database)
+		time.Sleep(50 * time.Millisecond)
+		notifiers.RemoveTestNotifier(notifier)
+		storages.RemoveTestStorage(storage.ID)
+		workspaces_testing.RemoveTestWorkspace(workspace, router)
+	}
+
+	return router, database, storage, cleanup
+}
+
+func saveWalFullBackupWithSegments(
+	t *testing.T,
+	databaseID uuid.UUID,
+	storageID uuid.UUID,
+	fullBackupAt time.Time,
+	walSegmentCount int,
+) (*backups_core.Backup, []*backups_core.Backup) {
+	t.Helper()
+
+	return saveSizedWalFullBackupWithSegments(
+		t,
+		databaseID,
+		storageID,
+		fullBackupAt,
+		100,
+		repeatFloat(16, walSegmentCount),
+	)
+}
+
+func saveSizedWalFullBackupWithSegments(
+	t *testing.T,
+	databaseID uuid.UUID,
+	storageID uuid.UUID,
+	fullBackupAt time.Time,
+	fullBackupSizeMb float64,
+	walSegmentSizesMb []float64,
+) (*backups_core.Backup, []*backups_core.Backup) {
+	t.Helper()
+
+	fullType := backups_core.PgWalBackupTypeFullBackup
+	stopSegment := "00000001000000000000000" + uuid.New().String()[:1]
+
+	full := &backups_core.Backup{
+		ID:                             uuid.New(),
+		DatabaseID:                     databaseID,
+		StorageID:                      storageID,
+		Status:                         backups_core.BackupStatusCompleted,
+		PgWalBackupType:                &fullType,
+		PgFullBackupWalStopSegmentName: &stopSegment,
+		BackupSizeMb:                   fullBackupSizeMb,
+		CreatedAt:                      fullBackupAt,
+	}
+	require.NoError(t, backupRepository.Save(full))
+
+	segType := backups_core.PgWalBackupTypeWalSegment
+	segs := make([]*backups_core.Backup, 0, len(walSegmentSizesMb))
+	for i, sizeMb := range walSegmentSizesMb {
+		seg := &backups_core.Backup{
+			ID:              uuid.New(),
+			DatabaseID:      databaseID,
+			StorageID:       storageID,
+			Status:          backups_core.BackupStatusCompleted,
+			PgWalBackupType: &segType,
+			BackupSizeMb:    sizeMb,
+			CreatedAt:       fullBackupAt.Add(time.Duration(i+1) * time.Minute),
+		}
+		require.NoError(t, backupRepository.Save(seg))
+
+		segs = append(segs, seg)
+	}
+
+	return full, segs
+}
+
+func setRetentionCount(t *testing.T, _ *gin.Engine, databaseID uuid.UUID, count int) {
+	t.Helper()
+
+	cfg, err := backups_config.GetBackupConfigService().GetBackupConfigByDbId(databaseID)
+	require.NoError(t, err)
+
+	cfg.RetentionCount = count
+	_, err = backups_config.GetBackupConfigService().SaveBackupConfig(cfg)
+	require.NoError(t, err)
+}
+
+func assertBackupExists(t *testing.T, backupID uuid.UUID, msgAndArgs ...any) {
+	t.Helper()
+
+	backup, err := backupRepository.FindByID(backupID)
+	assert.NoError(t, err)
+	assert.NotNil(t, backup, msgAndArgs...)
+}
+
+func assertBackupGone(t *testing.T, backupID uuid.UUID, msgAndArgs ...any) {
+	t.Helper()
+
+	backup, _ := backupRepository.FindByID(backupID)
+	assert.Nil(t, backup, msgAndArgs...)
+}
+
+func repeatFloat(value float64, count int) []float64 {
+	out := make([]float64, count)
+	for i := range out {
+		out[i] = value
+	}
+
+	return out
 }
 
 func enableCloud(t *testing.T) {

@@ -838,10 +838,7 @@ func Test_CreateDatabase_PasswordIsEncryptedInDB(t *testing.T) {
 	)
 
 	encryptor := encryption.GetFieldEncryptor()
-	decryptedPassword, err := encryptor.Decrypt(
-		databaseFromDB.ID,
-		databaseFromDB.Postgresql.Password,
-	)
+	decryptedPassword, err := encryptor.Decrypt(databaseFromDB.Postgresql.Password)
 	assert.NoError(t, err)
 	assert.Equal(t, plainPassword, decryptedPassword,
 		"Decrypted password should match original plaintext password")
@@ -894,7 +891,7 @@ func Test_DatabaseSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					"Password should be encrypted in database")
 
 				encryptor := encryption.GetFieldEncryptor()
-				decrypted, err := encryptor.Decrypt(database.ID, database.Postgresql.Password)
+				decrypted, err := encryptor.Decrypt(database.Postgresql.Password)
 				assert.NoError(t, err)
 				assert.Equal(t, "testpassword", decrypted)
 			},
@@ -930,7 +927,7 @@ func Test_DatabaseSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					"Password should be encrypted in database")
 
 				encryptor := encryption.GetFieldEncryptor()
-				decrypted, err := encryptor.Decrypt(database.ID, database.Mariadb.Password)
+				decrypted, err := encryptor.Decrypt(database.Mariadb.Password)
 				assert.NoError(t, err)
 				assert.Equal(t, "testpassword", decrypted)
 			},
@@ -966,7 +963,7 @@ func Test_DatabaseSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					"Password should be encrypted in database")
 
 				encryptor := encryption.GetFieldEncryptor()
-				decrypted, err := encryptor.Decrypt(database.ID, database.Mongodb.Password)
+				decrypted, err := encryptor.Decrypt(database.Mongodb.Password)
 				assert.NoError(t, err)
 				assert.Equal(t, "rootpassword", decrypted)
 			},

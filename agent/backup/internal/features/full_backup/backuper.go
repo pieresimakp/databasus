@@ -88,6 +88,20 @@ func (backuper *FullBackuper) checkAndRunIfNeeded(ctx context.Context) {
 		return
 	}
 
+	// Fetch next-time first: a nil response is the backend's signal that backups are disabled,
+	// and we must short-circuit before the chain-validity check (which would otherwise trigger
+	// a basebackup on `error=no_full_backup`).
+	nextTimeResp, err := backuper.apiClient.GetNextFullBackupTime(ctx)
+	if err != nil {
+		backuper.log.Error("Failed to check next full backup time", "error", err)
+		return
+	}
+
+	if nextTimeResp.NextFullBackupTime == nil {
+		backuper.log.Debug("Backups disabled, skipping basebackup check")
+		return
+	}
+
 	chainResp, err := backuper.apiClient.CheckWalChainValidity(ctx)
 	if err != nil {
 		backuper.log.Error("Failed to check WAL chain validity", "error", err)
@@ -105,13 +119,7 @@ func (backuper *FullBackuper) checkAndRunIfNeeded(ctx context.Context) {
 		return
 	}
 
-	nextTimeResp, err := backuper.apiClient.GetNextFullBackupTime(ctx)
-	if err != nil {
-		backuper.log.Error("Failed to check next full backup time", "error", err)
-		return
-	}
-
-	if nextTimeResp.NextFullBackupTime == nil || !nextTimeResp.NextFullBackupTime.After(time.Now().UTC()) {
+	if !nextTimeResp.NextFullBackupTime.After(time.Now().UTC()) {
 		backuper.log.Info("Scheduled full backup is due, triggering basebackup")
 		backuper.runBasebackupWithRetry(ctx)
 

@@ -47,14 +47,14 @@ repos:
     hooks:
       - id: agent-format-and-lint
         name: Agent Format & Lint (golangci-lint)
-        entry: bash -c "cd agent && golangci-lint fmt ./internal/... ./cmd/... && golangci-lint run ./internal/... ./cmd/..."
+        entry: bash -c "cd agent/backup && golangci-lint fmt ./internal/... ./cmd/... && golangci-lint run ./internal/... ./cmd/..."
         language: system
-        files: ^agent/.*\.go$
+        files: ^agent/backup/.*\.go$
         pass_filenames: false
 
       - id: agent-go-mod-tidy
         name: Agent Go Mod Tidy
-        entry: bash -c "cd agent && go mod tidy"
+        entry: bash -c "cd agent/backup && go mod tidy"
         language: system
-        files: ^agent/.*\.go$
+        files: ^agent/backup/.*\.go$
         pass_filenames: false

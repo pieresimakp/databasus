@@ -147,6 +147,26 @@ func Test_BackupAndRestoreMariadb_WithReadOnlyUser_RestoreIsSuccessful(t *testin
 	}
 }
 
+func Test_BackupAndRestoreMariadb_WithExcludeTables_ExcludedTablesNotRestored(t *testing.T) {
+	env := config.GetEnv()
+	cases := []struct {
+		name    string
+		version tools.MariadbVersion
+		port    string
+	}{
+		{"MariaDB 10.5", tools.MariadbVersion105, env.TestMariadb105Port},
+		{"MariaDB 10.11", tools.MariadbVersion1011, env.TestMariadb1011Port},
+		{"MariaDB 11.4", tools.MariadbVersion114, env.TestMariadb114Port},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testMariadbBackupRestoreWithExcludeTablesForVersion(t, tc.version, tc.port)
+		})
+	}
+}
+
 func Test_BackupAndRestoreMariadb_WithExcludeEvents_EventsNotRestored(t *testing.T) {
 	env := config.GetEnv()
 	cases := []struct {
@@ -721,6 +741,149 @@ func updateMariadbDatabaseCredentialsViaAPI(
 	}
 
 	return &updatedDatabase
+}
+
+func testMariadbBackupRestoreWithExcludeTablesForVersion(
+	t *testing.T,
+	mariadbVersion tools.MariadbVersion,
+	port string,
+) {
+	container, err := connectToMariadbContainer(mariadbVersion, port)
+	if err != nil {
+		t.Skipf("Skipping MariaDB %s test: %v", mariadbVersion, err)
+		return
+	}
+	defer func() {
+		if container.DB != nil {
+			container.DB.Close()
+		}
+	}()
+
+	setupMariadbTestData(t, container.DB)
+
+	_, err = container.DB.Exec(`DROP TABLE IF EXISTS extra_table`)
+	assert.NoError(t, err)
+
+	_, err = container.DB.Exec(`
+		CREATE TABLE extra_table (
+			id INT AUTO_INCREMENT PRIMARY KEY,
+			data VARCHAR(255) NOT NULL
+		)
+	`)
+	assert.NoError(t, err)
+
+	_, err = container.DB.Exec(`INSERT INTO extra_table (data) VALUES ('drop_me')`)
+	assert.NoError(t, err)
+
+	defer func() {
+		_, _ = container.DB.Exec(`DROP TABLE IF EXISTS extra_table`)
+	}()
+
+	router := createTestRouter()
+	user := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	workspace := workspaces_testing.CreateTestWorkspace(
+		"MariaDB Exclude Tables Test Workspace",
+		user,
+		router,
+	)
+
+	storage := storages.CreateTestStorage(workspace.ID)
+
+	database := createMariadbDatabaseViaAPI(
+		t, router, "MariaDB Exclude Tables Test Database", workspace.ID,
+		container.Host, container.Port,
+		container.Username, container.Password, container.Database,
+		container.Version,
+		user.Token,
+	)
+
+	database.Mariadb.ExcludeTables = []string{"extra_table"}
+	w := workspaces_testing.MakeAPIRequest(
+		router,
+		"POST",
+		"/api/v1/databases/update",
+		"Bearer "+user.Token,
+		database,
+	)
+	if w.Code != http.StatusOK {
+		t.Fatalf(
+			"Failed to update database with ExcludeTables. Status: %d, Body: %s",
+			w.Code,
+			w.Body.String(),
+		)
+	}
+
+	enableBackupsViaAPI(
+		t, router, database.ID, storage.ID,
+		backups_config.BackupEncryptionNone, user.Token,
+	)
+
+	createBackupViaAPI(t, router, database.ID, user.Token)
+
+	backup := waitForBackupCompletion(t, router, database.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, backups_core.BackupStatusCompleted, backup.Status)
+
+	newDBName := "restoreddb_mariadb_excl_tables"
+	_, err = container.DB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s;", newDBName))
+	assert.NoError(t, err)
+
+	_, err = container.DB.Exec(fmt.Sprintf("CREATE DATABASE %s;", newDBName))
+	assert.NoError(t, err)
+
+	newDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
+		container.Username, container.Password, container.Host, container.Port, newDBName)
+	newDB, err := sqlx.Connect("mysql", newDSN)
+	assert.NoError(t, err)
+	defer newDB.Close()
+
+	createMariadbRestoreViaAPI(
+		t, router, backup.ID,
+		container.Host, container.Port,
+		container.Username, container.Password, newDBName,
+		container.Version,
+		user.Token,
+	)
+
+	restore := waitForMariadbRestoreCompletion(t, router, backup.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, restores_core.RestoreStatusCompleted, restore.Status)
+
+	var keepExists int
+	err = newDB.Get(
+		&keepExists,
+		"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = 'test_data'",
+		newDBName,
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, keepExists, "test_data table should exist in restored database")
+
+	var dropExists int
+	err = newDB.Get(
+		&dropExists,
+		"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = 'extra_table'",
+		newDBName,
+	)
+	assert.NoError(t, err)
+	assert.Equal(
+		t,
+		0,
+		dropExists,
+		"extra_table should NOT exist in restored database (was excluded)",
+	)
+
+	err = os.Remove(filepath.Join(config.GetEnv().DataFolder, backup.ID.String()))
+	if err != nil {
+		t.Logf("Warning: Failed to delete backup file: %v", err)
+	}
+
+	test_utils.MakeDeleteRequest(
+		t,
+		router,
+		"/api/v1/databases/"+database.ID.String(),
+		"Bearer "+user.Token,
+		http.StatusNoContent,
+	)
+	storages.RemoveTestStorage(storage.ID)
+	workspaces_testing.RemoveTestWorkspace(workspace, router)
 }
 
 func testMariadbBackupRestoreWithExcludeEventsForVersion(

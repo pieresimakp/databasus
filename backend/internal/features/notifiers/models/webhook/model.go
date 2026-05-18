@@ -66,13 +66,13 @@ func (t *WebhookNotifier) AfterFind(_ *gorm.DB) error {
 	encryptor := encryption.GetFieldEncryptor()
 
 	if t.WebhookURL != "" {
-		if decrypted, err := encryptor.Decrypt(t.NotifierID, t.WebhookURL); err == nil {
+		if decrypted, err := encryptor.Decrypt(t.WebhookURL); err == nil {
 			t.WebhookURL = decrypted
 		}
 	}
 
 	if t.BodyTemplate != nil && *t.BodyTemplate != "" {
-		if decrypted, err := encryptor.Decrypt(t.NotifierID, *t.BodyTemplate); err == nil {
+		if decrypted, err := encryptor.Decrypt(*t.BodyTemplate); err == nil {
 			t.BodyTemplate = &decrypted
 		}
 	}
@@ -128,7 +128,7 @@ func (t *WebhookNotifier) Update(incoming *WebhookNotifier) {
 func (t *WebhookNotifier) EncryptSensitiveData(encryptor encryption.FieldEncryptor) error {
 	for i := range t.Headers {
 		if t.Headers[i].Value != "" {
-			encrypted, err := encryptor.Encrypt(t.NotifierID, t.Headers[i].Value)
+			encrypted, err := encryptor.Encrypt(t.Headers[i].Value)
 			if err != nil {
 				return fmt.Errorf("failed to encrypt header value: %w", err)
 			}
@@ -267,7 +267,7 @@ func escapeJSONString(s string) string {
 func (t *WebhookNotifier) decryptHeadersForSending(encryptor encryption.FieldEncryptor) error {
 	for i := range t.Headers {
 		if t.Headers[i].Value != "" {
-			if decrypted, err := encryptor.Decrypt(t.NotifierID, t.Headers[i].Value); err == nil {
+			if decrypted, err := encryptor.Decrypt(t.Headers[i].Value); err == nil {
 				t.Headers[i].Value = decrypted
 			}
 		}

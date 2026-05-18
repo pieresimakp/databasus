@@ -229,7 +229,7 @@ func (s *SFTPStorage) HideSensitiveData() {
 
 func (s *SFTPStorage) EncryptSensitiveData(encryptor encryption.FieldEncryptor) error {
 	if s.Password != "" {
-		encrypted, err := encryptor.Encrypt(s.StorageID, s.Password)
+		encrypted, err := encryptor.Encrypt(s.Password)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt SFTP password: %w", err)
 		}
@@ -237,7 +237,7 @@ func (s *SFTPStorage) EncryptSensitiveData(encryptor encryption.FieldEncryptor) 
 	}
 
 	if s.PrivateKey != "" {
-		encrypted, err := encryptor.Encrypt(s.StorageID, s.PrivateKey)
+		encrypted, err := encryptor.Encrypt(s.PrivateKey)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt SFTP private key: %w", err)
 		}
@@ -278,7 +278,7 @@ func (s *SFTPStorage) connectWithContext(
 	var authMethods []ssh.AuthMethod
 
 	if s.Password != "" {
-		password, err := encryptor.Decrypt(s.StorageID, s.Password)
+		password, err := encryptor.Decrypt(s.Password)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to decrypt SFTP password: %w", err)
 		}
@@ -286,7 +286,7 @@ func (s *SFTPStorage) connectWithContext(
 	}
 
 	if s.PrivateKey != "" {
-		privateKey, err := encryptor.Decrypt(s.StorageID, s.PrivateKey)
+		privateKey, err := encryptor.Decrypt(s.PrivateKey)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to decrypt SFTP private key: %w", err)
 		}

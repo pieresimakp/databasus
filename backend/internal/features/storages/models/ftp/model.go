@@ -206,7 +206,7 @@ func (f *FTPStorage) HideSensitiveData() {
 
 func (f *FTPStorage) EncryptSensitiveData(encryptor encryption.FieldEncryptor) error {
 	if f.Password != "" {
-		encrypted, err := encryptor.Encrypt(f.StorageID, f.Password)
+		encrypted, err := encryptor.Encrypt(f.Password)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt FTP password: %w", err)
 		}
@@ -241,7 +241,7 @@ func (f *FTPStorage) connectWithContext(
 	encryptor encryption.FieldEncryptor,
 	timeout time.Duration,
 ) (*ftp.ServerConn, error) {
-	password, err := encryptor.Decrypt(f.StorageID, f.Password)
+	password, err := encryptor.Decrypt(f.Password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt FTP password: %w", err)
 	}

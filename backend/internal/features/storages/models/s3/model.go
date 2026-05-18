@@ -330,14 +330,14 @@ func (s *S3Storage) EncryptSensitiveData(encryptor encryption.FieldEncryptor) er
 	var err error
 
 	if s.S3AccessKey != "" {
-		s.S3AccessKey, err = encryptor.Encrypt(s.StorageID, s.S3AccessKey)
+		s.S3AccessKey, err = encryptor.Encrypt(s.S3AccessKey)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt S3 access key: %w", err)
 		}
 	}
 
 	if s.S3SecretKey != "" {
-		s.S3SecretKey, err = encryptor.Encrypt(s.StorageID, s.S3SecretKey)
+		s.S3SecretKey, err = encryptor.Encrypt(s.S3SecretKey)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt S3 secret key: %w", err)
 		}
@@ -448,12 +448,12 @@ func (s *S3Storage) getClientParams(
 		endpoint = fmt.Sprintf("s3.%s.amazonaws.com", s.S3Region)
 	}
 
-	accessKey, err = encryptor.Decrypt(s.StorageID, s.S3AccessKey)
+	accessKey, err = encryptor.Decrypt(s.S3AccessKey)
 	if err != nil {
 		return "", false, "", "", 0, nil, fmt.Errorf("failed to decrypt S3 access key: %w", err)
 	}
 
-	secretKey, err = encryptor.Decrypt(s.StorageID, s.S3SecretKey)
+	secretKey, err = encryptor.Decrypt(s.S3SecretKey)
 	if err != nil {
 		return "", false, "", "", 0, nil, fmt.Errorf("failed to decrypt S3 secret key: %w", err)
 	}

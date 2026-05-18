@@ -32,9 +32,10 @@ if [ "$MODE" = "host" ]; then
   run_test "Test 3: Background upgrade (v1 -> v2 while running)" "$SCRIPT_DIR/test-upgrade-background.sh"
   run_test "Test 4: Backup-restore via host PATH" "$SCRIPT_DIR/test-pg-host-path.sh"
   run_test "Test 5: Backup-restore via host bindir" "$SCRIPT_DIR/test-pg-host-bindir.sh"
+  run_test "Test 6: WAL archive cleanup of .backup history files" "$SCRIPT_DIR/test-wal-archive-cleanup.sh"
 
 elif [ "$MODE" = "docker" ]; then
-  run_test "Test 6: Backup-restore via docker exec" "$SCRIPT_DIR/test-pg-docker-exec.sh"
+  run_test "Test 7: Backup-restore via docker exec" "$SCRIPT_DIR/test-pg-docker-exec.sh"
 
 else
   echo "Unknown mode: $MODE (expected 'host' or 'docker')"

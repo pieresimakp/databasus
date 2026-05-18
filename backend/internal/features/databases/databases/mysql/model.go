@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"databasus-backend/internal/util/encryption"
 	"databasus-backend/internal/util/tools"
@@ -25,18 +26,40 @@ type MysqlDatabase struct {
 
 	Version tools.MysqlVersion `json:"version" gorm:"type:text;not null"`
 
-	Host            string  `json:"host"            gorm:"type:text;not null"`
-	Port            int     `json:"port"            gorm:"type:int;not null"`
-	Username        string  `json:"username"        gorm:"type:text;not null"`
-	Password        string  `json:"password"        gorm:"type:text;not null"`
-	Database        *string `json:"database"        gorm:"type:text"`
-	IsHttps         bool    `json:"isHttps"         gorm:"type:boolean;default:false"`
-	Privileges      string  `json:"privileges"      gorm:"column:privileges;type:text;not null;default:''"`
-	IsZstdSupported bool    `json:"isZstdSupported" gorm:"column:is_zstd_supported;type:boolean;not null;default:true"`
+	Host                string   `json:"host"            gorm:"type:text;not null"`
+	Port                int      `json:"port"            gorm:"type:int;not null"`
+	Username            string   `json:"username"        gorm:"type:text;not null"`
+	Password            string   `json:"password"        gorm:"type:text;not null"`
+	Database            *string  `json:"database"        gorm:"type:text"`
+	IsHttps             bool     `json:"isHttps"         gorm:"type:boolean;default:false"`
+	ExcludeTables       []string `json:"excludeTables"   gorm:"-"`
+	ExcludeTablesString string   `json:"-"               gorm:"column:exclude_tables;type:text;not null;default:''"`
+	Privileges          string   `json:"privileges"      gorm:"column:privileges;type:text;not null;default:''"`
+	IsZstdSupported     bool     `json:"isZstdSupported" gorm:"column:is_zstd_supported;type:boolean;not null;default:true"`
 }
 
 func (m *MysqlDatabase) TableName() string {
 	return "mysql_databases"
+}
+
+func (m *MysqlDatabase) BeforeSave(_ *gorm.DB) error {
+	if len(m.ExcludeTables) > 0 {
+		m.ExcludeTablesString = strings.Join(m.ExcludeTables, ",")
+	} else {
+		m.ExcludeTablesString = ""
+	}
+
+	return nil
+}
+
+func (m *MysqlDatabase) AfterFind(_ *gorm.DB) error {
+	if m.ExcludeTablesString != "" {
+		m.ExcludeTables = strings.Split(m.ExcludeTablesString, ",")
+	} else {
+		m.ExcludeTables = []string{}
+	}
+
+	return nil
 }
 
 func (m *MysqlDatabase) Validate() error {
@@ -58,7 +81,6 @@ func (m *MysqlDatabase) Validate() error {
 func (m *MysqlDatabase) TestConnection(
 	logger *slog.Logger,
 	encryptor encryption.FieldEncryptor,
-	databaseID uuid.UUID,
 ) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -67,7 +89,7 @@ func (m *MysqlDatabase) TestConnection(
 		return errors.New("database name is required for MySQL backup")
 	}
 
-	password, err := decryptPasswordIfNeeded(m.Password, encryptor, databaseID)
+	password, err := decryptPasswordIfNeeded(m.Password, encryptor)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt password: %w", err)
 	}
@@ -112,6 +134,50 @@ func (m *MysqlDatabase) TestConnection(
 	return nil
 }
 
+func (m *MysqlDatabase) GetRawDbSizeMb(
+	ctx context.Context,
+	logger *slog.Logger,
+	encryptor encryption.FieldEncryptor,
+) (float64, error) {
+	if m.Database == nil || *m.Database == "" {
+		return 0, nil
+	}
+
+	password, err := decryptPasswordIfNeeded(m.Password, encryptor)
+	if err != nil {
+		return 0, fmt.Errorf("failed to decrypt password: %w", err)
+	}
+
+	dsn := m.buildDSN(password, *m.Database)
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return 0, fmt.Errorf("failed to connect to MySQL database '%s': %w", *m.Database, err)
+	}
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			logger.Error("Failed to close MySQL connection", "error", closeErr)
+		}
+	}()
+
+	db.SetConnMaxLifetime(15 * time.Second)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	const query = `
+		SELECT COALESCE(SUM(data_length + index_length), 0) / (1024 * 1024)
+		FROM information_schema.tables
+		WHERE table_schema = ?
+	`
+
+	var sizeMB float64
+	if err := db.QueryRowContext(ctx, query, *m.Database).Scan(&sizeMB); err != nil {
+		return 0, fmt.Errorf("failed to query MySQL database size: %w", err)
+	}
+
+	return sizeMB, nil
+}
+
 func (m *MysqlDatabase) HideSensitiveData() {
 	if m == nil {
 		return
@@ -126,6 +192,7 @@ func (m *MysqlDatabase) Update(incoming *MysqlDatabase) {
 	m.Username = incoming.Username
 	m.Database = incoming.Database
 	m.IsHttps = incoming.IsHttps
+	m.ExcludeTables = incoming.ExcludeTables
 	m.Privileges = incoming.Privileges
 	m.IsZstdSupported = incoming.IsZstdSupported
 
@@ -135,11 +202,10 @@ func (m *MysqlDatabase) Update(incoming *MysqlDatabase) {
 }
 
 func (m *MysqlDatabase) EncryptSensitiveFields(
-	databaseID uuid.UUID,
 	encryptor encryption.FieldEncryptor,
 ) error {
 	if m.Password != "" {
-		encrypted, err := encryptor.Encrypt(databaseID, m.Password)
+		encrypted, err := encryptor.Encrypt(m.Password)
 		if err != nil {
 			return err
 		}
@@ -151,7 +217,6 @@ func (m *MysqlDatabase) EncryptSensitiveFields(
 func (m *MysqlDatabase) PopulateDbData(
 	logger *slog.Logger,
 	encryptor encryption.FieldEncryptor,
-	databaseID uuid.UUID,
 ) error {
 	if m.Database == nil || *m.Database == "" {
 		return nil
@@ -160,7 +225,7 @@ func (m *MysqlDatabase) PopulateDbData(
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	password, err := decryptPasswordIfNeeded(m.Password, encryptor, databaseID)
+	password, err := decryptPasswordIfNeeded(m.Password, encryptor)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt password: %w", err)
 	}
@@ -196,7 +261,6 @@ func (m *MysqlDatabase) PopulateDbData(
 func (m *MysqlDatabase) PopulateVersion(
 	logger *slog.Logger,
 	encryptor encryption.FieldEncryptor,
-	databaseID uuid.UUID,
 ) error {
 	if m.Database == nil || *m.Database == "" {
 		return nil
@@ -205,7 +269,7 @@ func (m *MysqlDatabase) PopulateVersion(
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	password, err := decryptPasswordIfNeeded(m.Password, encryptor, databaseID)
+	password, err := decryptPasswordIfNeeded(m.Password, encryptor)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt password: %w", err)
 	}
@@ -236,9 +300,8 @@ func (m *MysqlDatabase) IsUserReadOnly(
 	ctx context.Context,
 	logger *slog.Logger,
 	encryptor encryption.FieldEncryptor,
-	databaseID uuid.UUID,
 ) (bool, []string, error) {
-	password, err := decryptPasswordIfNeeded(m.Password, encryptor, databaseID)
+	password, err := decryptPasswordIfNeeded(m.Password, encryptor)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to decrypt password: %w", err)
 	}
@@ -261,12 +324,26 @@ func (m *MysqlDatabase) IsUserReadOnly(
 	}
 	defer func() { _ = rows.Close() }()
 
-	writePrivileges := []string{
-		"INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER",
-		"INDEX", "GRANT OPTION", "ALL PRIVILEGES", "SUPER",
-		"EXECUTE", "FILE", "RELOAD", "SHUTDOWN", "CREATE ROUTINE",
-		"ALTER ROUTINE", "CREATE USER",
-		"CREATE TABLESPACE", "REFERENCES",
+	writePrivileges := map[string]bool{
+		"INSERT":            true,
+		"UPDATE":            true,
+		"DELETE":            true,
+		"CREATE":            true,
+		"DROP":              true,
+		"ALTER":             true,
+		"INDEX":             true,
+		"GRANT OPTION":      true,
+		"ALL PRIVILEGES":    true,
+		"SUPER":             true,
+		"EXECUTE":           true,
+		"FILE":              true,
+		"RELOAD":            true,
+		"SHUTDOWN":          true,
+		"CREATE ROUTINE":    true,
+		"ALTER ROUTINE":     true,
+		"CREATE USER":       true,
+		"CREATE TABLESPACE": true,
+		"REFERENCES":        true,
 	}
 
 	detectedPrivileges := make(map[string]bool)
@@ -277,8 +354,8 @@ func (m *MysqlDatabase) IsUserReadOnly(
 			return false, nil, fmt.Errorf("failed to scan grant: %w", err)
 		}
 
-		for _, priv := range writePrivileges {
-			if regexp.MustCompile(`(?i)\b` + priv + `\b`).MatchString(grant) {
+		for _, priv := range parseGrantPrivileges(grant) {
+			if writePrivileges[priv] {
 				detectedPrivileges[priv] = true
 			}
 		}
@@ -302,9 +379,8 @@ func (m *MysqlDatabase) CreateReadOnlyUser(
 	ctx context.Context,
 	logger *slog.Logger,
 	encryptor encryption.FieldEncryptor,
-	databaseID uuid.UUID,
 ) (string, string, error) {
-	password, err := decryptPasswordIfNeeded(m.Password, encryptor, databaseID)
+	password, err := decryptPasswordIfNeeded(m.Password, encryptor)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to decrypt password: %w", err)
 	}
@@ -478,6 +554,37 @@ func mapMysql8xVersion(minor string) tools.MysqlVersion {
 	}
 }
 
+// parseGrantPrivileges extracts comma-separated privilege names from a single
+// SHOW GRANTS line. Returns uppercased privilege tokens with column-level
+// qualifiers like "(col1, col2)" stripped. Returns nil for role grants and
+// other lines without an ON clause.
+//
+// Parsing the privilege list is necessary because a naive substring search
+// over the whole grant string falsely matches privilege keywords that appear
+// inside other privilege names — e.g. "CREATE VIEW" contains "CREATE" as a
+// substring.
+func parseGrantPrivileges(grant string) []string {
+	headRe := regexp.MustCompile(`(?is)^\s*GRANT\s+(.+?)\s+ON\s+`)
+	m := headRe.FindStringSubmatch(grant)
+	if m == nil {
+		return nil
+	}
+
+	colRe := regexp.MustCompile(`\s*\([^)]*\)`)
+	privsStr := colRe.ReplaceAllString(m[1], "")
+
+	parts := strings.Split(privsStr, ",")
+	privs := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(strings.ToUpper(p))
+		if p != "" {
+			privs = append(privs, p)
+		}
+	}
+
+	return privs
+}
+
 // detectPrivileges detects backup-related privileges and returns them as comma-separated string
 func detectPrivileges(ctx context.Context, db *sql.DB, database string) (string, error) {
 	rows, err := db.QueryContext(ctx, "SHOW GRANTS FOR CURRENT_USER()")
@@ -599,10 +706,9 @@ func detectZstdSupport(ctx context.Context, db *sql.DB) bool {
 func decryptPasswordIfNeeded(
 	password string,
 	encryptor encryption.FieldEncryptor,
-	databaseID uuid.UUID,
 ) (string, error) {
 	if encryptor == nil {
 		return password, nil
 	}
-	return encryptor.Decrypt(databaseID, password)
+	return encryptor.Decrypt(password)
 }

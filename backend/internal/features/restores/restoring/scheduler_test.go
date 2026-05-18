@@ -692,7 +692,7 @@ func Test_StartRestore_CredentialsStoredEncryptedInCache(t *testing.T) {
 
 	// Encrypt password using FieldEncryptor (same as production flow)
 	encryptor := encryption.GetFieldEncryptor()
-	err = postgresDB.EncryptSensitiveFields(database.ID, encryptor)
+	err = postgresDB.EncryptSensitiveFields(encryptor)
 	assert.NoError(t, err)
 
 	// Verify password was encrypted (different from plaintext)
@@ -803,7 +803,7 @@ func Test_StartRestore_CredentialsRemovedAfterRestoreStarts(t *testing.T) {
 
 	// Encrypt password (same as production flow)
 	encryptor := encryption.GetFieldEncryptor()
-	err = postgresDB.EncryptSensitiveFields(database.ID, encryptor)
+	err = postgresDB.EncryptSensitiveFields(encryptor)
 	assert.NoError(t, err)
 
 	encryptedPassword := postgresDB.Password

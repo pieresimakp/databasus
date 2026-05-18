@@ -13,4 +13,5 @@ export interface MongodbDatabase {
   isSrv: boolean;
   isDirectConnection: boolean;
   cpuCount: number;
+  excludeCollections?: string[];
 }
