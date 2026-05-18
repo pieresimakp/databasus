@@ -311,6 +311,10 @@ func (s *PostgreWalBackupService) DownloadBackupFile(
 	return s.backupService.GetBackupReader(backupID)
 }
 
+// GetNextFullBackupTime returns when the agent should next run pg_basebackup.
+//
+// nil response is the "do not run" signal — the agent treats it as "backups disabled."
+// A concrete past/now time tells the agent to run immediately (first run, or schedule overdue).
 func (s *PostgreWalBackupService) GetNextFullBackupTime(
 	database *databases.Database,
 ) (*backups_dto.GetNextFullBackupTimeResponse, error) {
@@ -321,6 +325,10 @@ func (s *PostgreWalBackupService) GetNextFullBackupTime(
 	backupConfig, err := s.backupConfigService.GetBackupConfigByDbId(database.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get backup config: %w", err)
+	}
+
+	if !backupConfig.IsBackupsEnabled {
+		return &backups_dto.GetNextFullBackupTimeResponse{NextFullBackupTime: nil}, nil
 	}
 
 	if backupConfig.BackupInterval == nil {
@@ -341,6 +349,10 @@ func (s *PostgreWalBackupService) GetNextFullBackupTime(
 
 	now := time.Now().UTC()
 	nextTime := backupConfig.BackupInterval.NextTriggerTime(now, lastBackupTime)
+
+	if nextTime == nil {
+		nextTime = &now
+	}
 
 	return &backups_dto.GetNextFullBackupTimeResponse{
 		NextFullBackupTime: nextTime,

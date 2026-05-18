@@ -29,7 +29,7 @@ func (n *TeamsNotifier) Validate(encryptor encryption.FieldEncryptor) error {
 		return errors.New("webhook_url is required")
 	}
 
-	webhookURL, err := encryptor.Decrypt(n.NotifierID, n.WebhookURL)
+	webhookURL, err := encryptor.Decrypt(n.WebhookURL)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt webhook URL: %w", err)
 	}
@@ -61,7 +61,7 @@ func (n *TeamsNotifier) Send(
 		return err
 	}
 
-	webhookURL, err := encryptor.Decrypt(n.NotifierID, n.WebhookURL)
+	webhookURL, err := encryptor.Decrypt(n.WebhookURL)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt webhook URL: %w", err)
 	}
@@ -125,7 +125,7 @@ func (n *TeamsNotifier) Update(incoming *TeamsNotifier) {
 
 func (n *TeamsNotifier) EncryptSensitiveData(encryptor encryption.FieldEncryptor) error {
 	if n.WebhookURL != "" {
-		encrypted, err := encryptor.Encrypt(n.NotifierID, n.WebhookURL)
+		encrypted, err := encryptor.Encrypt(n.WebhookURL)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt webhook URL: %w", err)
 		}

@@ -1,5 +1,24 @@
 services:
   # ================================================================
+  # Local image build (opt-in via profile)
+  # ================================================================
+
+  # For local development only to test build. This service is gated
+  # behind the "image" profile so it does NOT start with a plain
+  # `docker compose up -d`. To run: docker compose up databasus-local
+  databasus-local:
+    profiles: ["image"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "4005:4005"
+    volumes:
+      - ./databasus-data:/databasus-data
+    container_name: databasus-local
+    restart: unless-stopped
+
+  # ================================================================
   # Backend dev services
   # ================================================================
 
@@ -8,7 +27,7 @@ services:
   backend-db:
     image: postgres:17
     ports:
-      - "5437:5437"
+      - "${BACKEND_DB_PORT:-5437}:5432"
     environment:
       - POSTGRES_DB=${DEV_DB_NAME}
       - POSTGRES_USER=${DEV_DB_USERNAME}
@@ -16,7 +35,20 @@ services:
     volumes:
       - ./pgdata:/var/lib/postgresql/data
     container_name: backend-db
-    command: -p 5437
+    shm_size: 10gb
+
+  # Dedicated test DB so `make test` doesn't pollute the dev DB
+  backend-db-test:
+    image: postgres:17
+    ports:
+      - "${BACKEND_DB_TEST_PORT:-5438}:5432"
+    environment:
+      - POSTGRES_DB=${DEV_DB_NAME}
+      - POSTGRES_USER=${DEV_DB_USERNAME}
+      - POSTGRES_PASSWORD=${DEV_DB_PASSWORD}
+    volumes:
+      - ./pgdata-test:/var/lib/postgresql/data
+    container_name: backend-db-test
     shm_size: 10gb
 
   # Valkey for caching
@@ -39,7 +71,7 @@ services:
     image: victoriametrics/victoria-logs:latest
     container_name: backend-victoria-logs
     ports:
-      - "9428:9428"
+      - "${BACKEND_VICTORIA_LOGS_PORT:-9428}:9428"
     command:
       - -storageDataPath=/victoria-logs-data
       - -retentionPeriod=7d
@@ -60,7 +92,7 @@ services:
       POSTGRES_USER: devuser
       POSTGRES_PASSWORD: devpassword
     ports:
-      - "7433:5432"
+      - "${AGENT_DB_PORT:-7433}:5432"
     command:
       - bash
       - -c
@@ -179,7 +211,7 @@ services:
     ports:
       - "${TEST_AZURITE_BLOB_PORT}:10000"
     container_name: test-azurite
-    command: azurite-blob --blobHost 0.0.0.0
+    command: azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
 
   # Test NAS server (Samba)
   test-nas:
@@ -507,6 +539,22 @@ services:
       retries: 10
 
   # Test MongoDB containers
+  test-mongodb-40:
+    image: mongo:4.0
+    container_name: test-mongodb-40
+    ports:
+      - "${TEST_MONGODB_40_PORT}:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpassword
+      MONGO_INITDB_DATABASE: testdb
+    command: mongod --auth
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   test-mongodb-42:
     image: mongo:4.2
     container_name: test-mongodb-42
@@ -599,6 +647,109 @@ services:
     command: mongod --auth
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ================================================================
+  # SSL / TLS test containers
+  # One representative version per engine — the goal is to catch SSL
+  # handshake regressions without multiplying the version matrix.
+  # ================================================================
+
+  test-postgres-ssl:
+    build:
+      context: ./backend/internal/features/tests/testdata/ssl
+      dockerfile_inline: |
+        FROM postgres:18
+        COPY server.key /etc/ssl-test/server.key
+        COPY server.crt /etc/ssl-test/server.crt
+        COPY pg_hba.conf /etc/ssl-test/pg_hba.conf
+        RUN chown postgres:postgres /etc/ssl-test/server.key /etc/ssl-test/server.crt /etc/ssl-test/pg_hba.conf \
+         && chmod 600 /etc/ssl-test/server.key \
+         && chmod 644 /etc/ssl-test/server.crt /etc/ssl-test/pg_hba.conf
+    ports:
+      - "${TEST_POSTGRES_SSL_PORT}:5432"
+    environment:
+      - POSTGRES_DB=testdb
+      - POSTGRES_USER=testuser
+      - POSTGRES_PASSWORD=testpassword
+    command: postgres -c ssl=on -c ssl_cert_file=/etc/ssl-test/server.crt -c ssl_key_file=/etc/ssl-test/server.key -c hba_file=/etc/ssl-test/pg_hba.conf
+    container_name: test-postgres-ssl
+    shm_size: 1gb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  test-mariadb-ssl:
+    image: mariadb:11.8
+    ports:
+      - "${TEST_MARIADB_SSL_PORT}:3306"
+    environment:
+      - MARIADB_ROOT_PASSWORD=rootpassword
+      - MARIADB_DATABASE=testdb
+      - MARIADB_USER=testuser
+      - MARIADB_PASSWORD=testpassword
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --require-secure-transport=ON
+    volumes:
+      - ./mariadbdata/mariadb-ssl:/var/lib/mysql
+    container_name: test-mariadb-ssl
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  test-mysql-ssl:
+    image: mysql:8.4
+    ports:
+      - "${TEST_MYSQL_SSL_PORT}:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=testdb
+      - MYSQL_USER=testuser
+      - MYSQL_PASSWORD=testpassword
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --require_secure_transport=ON
+    volumes:
+      - ./mysqldata/mysql-ssl:/var/lib/mysql
+    container_name: test-mysql-ssl
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Certs baked in via build context — see test-postgres-ssl note.
+  test-mongodb-ssl:
+    build:
+      context: ./backend/internal/features/tests/testdata/ssl
+      dockerfile_inline: |
+        FROM mongo:8.2.3-noble
+        COPY server.pem /etc/ssl-test/server.pem
+        COPY server.crt /etc/ssl-test/server.crt
+        RUN chown mongodb:mongodb /etc/ssl-test/server.pem /etc/ssl-test/server.crt \
+         && chmod 600 /etc/ssl-test/server.pem \
+         && chmod 644 /etc/ssl-test/server.crt
+    container_name: test-mongodb-ssl
+    ports:
+      - "${TEST_MONGODB_SSL_PORT}:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpassword
+      MONGO_INITDB_DATABASE: testdb
+    command: mongod --auth --tlsMode requireTLS --tlsCertificateKeyFile /etc/ssl-test/server.pem --tlsCAFile /etc/ssl-test/server.crt --tlsAllowConnectionsWithoutCertificates
+    healthcheck:
+      test: ["CMD", "mongosh", "--tls", "--tlsAllowInvalidCertificates",
+             "-u", "root", "-p", "rootpassword", "--authenticationDatabase", "admin",
+             "--eval", "db.adminCommand('ping')"]
       interval: 5s
       timeout: 5s
       retries: 10

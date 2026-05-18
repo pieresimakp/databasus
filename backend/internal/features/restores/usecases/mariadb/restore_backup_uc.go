@@ -138,7 +138,7 @@ func (uc *RestoreMariadbBackupUsecase) restoreFromStorage(
 	}()
 
 	fieldEncryptor := util_encryption.GetFieldEncryptor()
-	decryptedPassword, err := fieldEncryptor.Decrypt(database.ID, password)
+	decryptedPassword, err := fieldEncryptor.Decrypt(password)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt password: %w", err)
 	}

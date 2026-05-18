@@ -2,6 +2,7 @@ package intervals
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,27 +28,42 @@ func (i *Interval) BeforeSave(tx *gorm.DB) error {
 }
 
 func (i *Interval) Validate() error {
-	// for daily, weekly and monthly intervals time of day is required
-	if (i.Interval == IntervalDaily || i.Interval == IntervalWeekly || i.Interval == IntervalMonthly) &&
-		i.TimeOfDay == nil {
-		return errors.New("time of day is required for daily, weekly and monthly intervals")
+	if i.Interval == IntervalDaily || i.Interval == IntervalWeekly || i.Interval == IntervalMonthly {
+		if i.TimeOfDay == nil {
+			return errors.New("time of day is required for daily, weekly and monthly intervals")
+		}
+
+		if _, err := time.Parse("15:04", *i.TimeOfDay); err != nil {
+			return fmt.Errorf("invalid time of day: %w", err)
+		}
 	}
 
-	// for weekly interval weekday is required
-	if i.Interval == IntervalWeekly && i.Weekday == nil {
-		return errors.New("weekday is required for weekly intervals")
+	if i.Interval == IntervalWeekly {
+		if i.Weekday == nil {
+			return errors.New("weekday is required for weekly intervals")
+		}
+
+		// 0 and 7 both mean Sunday — see shouldTriggerWeekly for the alias handling
+		if *i.Weekday < 0 || *i.Weekday > 7 {
+			return errors.New("weekday must be between 0 and 7")
+		}
 	}
 
-	// for monthly interval day of month is required
-	if i.Interval == IntervalMonthly && i.DayOfMonth == nil {
-		return errors.New("day of month is required for monthly intervals")
+	if i.Interval == IntervalMonthly {
+		if i.DayOfMonth == nil {
+			return errors.New("day of month is required for monthly intervals")
+		}
+
+		if *i.DayOfMonth < 1 || *i.DayOfMonth > 31 {
+			return errors.New("day of month must be between 1 and 31")
+		}
 	}
 
-	// for cron interval cron expression is required and must be valid
 	if i.Interval == IntervalCron {
 		if i.CronExpression == nil || *i.CronExpression == "" {
 			return errors.New("cron expression is required for cron intervals")
 		}
+
 		if err := i.validateCronExpression(*i.CronExpression); err != nil {
 			return err
 		}

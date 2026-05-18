@@ -1,5 +1,5 @@
-import { CopyOutlined } from '@ant-design/icons';
-import { App, Button, Input, InputNumber, Switch } from 'antd';
+import { CopyOutlined, DownOutlined, InfoCircleOutlined, UpOutlined } from '@ant-design/icons';
+import { App, Button, Input, InputNumber, Select, Switch, Tooltip } from 'antd';
 import { useEffect, useState } from 'react';
 
 import { IS_CLOUD } from '../../../../constants';
@@ -47,6 +47,9 @@ export const EditMySqlSpecificDataComponent = ({
   const [isConnectionTested, setIsConnectionTested] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isConnectionFailed, setIsConnectionFailed] = useState(false);
+
+  const hasAdvancedValues = !!database.mysql?.excludeTables?.length;
+  const [isShowAdvanced, setShowAdvanced] = useState(hasAdvancedValues);
 
   const [isShowPasteModal, setIsShowPasteModal] = useState(false);
 
@@ -327,6 +330,47 @@ export const EditMySqlSpecificDataComponent = ({
           size="small"
         />
       </div>
+
+      <div className="mt-4 mb-1 flex items-center">
+        <div
+          className="flex cursor-pointer items-center text-sm text-blue-600 hover:text-blue-800"
+          onClick={() => setShowAdvanced(!isShowAdvanced)}
+        >
+          <span className="mr-2">Advanced settings</span>
+
+          {isShowAdvanced ? (
+            <UpOutlined style={{ fontSize: '12px' }} />
+          ) : (
+            <DownOutlined style={{ fontSize: '12px' }} />
+          )}
+        </div>
+      </div>
+
+      {isShowAdvanced && (
+        <div className="mb-1 flex w-full items-center">
+          <div className="min-w-[150px]">Exclude tables</div>
+          <Select
+            mode="tags"
+            value={editingDatabase.mysql?.excludeTables || []}
+            onChange={(values) => {
+              if (!editingDatabase.mysql) return;
+
+              setEditingDatabase({
+                ...editingDatabase,
+                mysql: { ...editingDatabase.mysql, excludeTables: values },
+              });
+            }}
+            size="small"
+            className="max-w-[200px] grow"
+            placeholder="No tables excluded"
+            tokenSeparators={[',']}
+          />
+
+          <Tooltip className="cursor-pointer" title="Table names to exclude from the backup.">
+            <InfoCircleOutlined className="ml-2" style={{ color: 'gray' }} />
+          </Tooltip>
+        </div>
+      )}
 
       <div className="mt-5 flex">
         {isShowCancelButton && (

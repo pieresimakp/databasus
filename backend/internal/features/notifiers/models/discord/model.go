@@ -38,7 +38,7 @@ func (d *DiscordNotifier) Send(
 	heading string,
 	message string,
 ) error {
-	webhookURL, err := encryptor.Decrypt(d.NotifierID, d.ChannelWebhookURL)
+	webhookURL, err := encryptor.Decrypt(d.ChannelWebhookURL)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt webhook URL: %w", err)
 	}
@@ -97,7 +97,7 @@ func (d *DiscordNotifier) Update(incoming *DiscordNotifier) {
 
 func (d *DiscordNotifier) EncryptSensitiveData(encryptor encryption.FieldEncryptor) error {
 	if d.ChannelWebhookURL != "" {
-		encrypted, err := encryptor.Encrypt(d.NotifierID, d.ChannelWebhookURL)
+		encrypted, err := encryptor.Encrypt(d.ChannelWebhookURL)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt webhook URL: %w", err)
 		}

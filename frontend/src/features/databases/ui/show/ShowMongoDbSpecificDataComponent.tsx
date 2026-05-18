@@ -55,6 +55,13 @@ export const ShowMongoDbSpecificDataComponent = ({ database }: Props) => {
           <div>{database.mongodb.authDatabase}</div>
         </div>
       )}
+
+      {!!database.mongodb?.excludeCollections?.length && (
+        <div className="mb-1 flex w-full items-center">
+          <div className="min-w-[150px]">Exclude collections</div>
+          <div>{database.mongodb.excludeCollections.join(', ')}</div>
+        </div>
+      )}
     </div>
   );
 };

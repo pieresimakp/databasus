@@ -143,8 +143,12 @@ func (uc *RestorePostgresqlBackupUsecase) restoreViaStdin(
 		"--verbose",
 		"--clean",
 		"--if-exists",
-		"--no-owner",
-		"--no-acl",
+	}
+	if !pg.IsRestoreOwnership {
+		args = append(args, "--no-owner")
+	}
+	if !pg.IsRestorePrivileges {
+		args = append(args, "--no-acl")
 	}
 
 	ctx, cancel := context.WithTimeout(parentCtx, 23*time.Hour)
@@ -173,7 +177,7 @@ func (uc *RestorePostgresqlBackupUsecase) restoreViaStdin(
 
 	// Create temporary .pgpass file for authentication
 	fieldEncryptor := util_encryption.GetFieldEncryptor()
-	decryptedPassword, err := fieldEncryptor.Decrypt(originalDB.ID, pg.Password)
+	decryptedPassword, err := fieldEncryptor.Decrypt(pg.Password)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt password: %w", err)
 	}
@@ -386,8 +390,12 @@ func (uc *RestorePostgresqlBackupUsecase) restoreViaFile(
 		"--verbose",
 		"--clean",
 		"--if-exists",
-		"--no-owner",
-		"--no-acl",
+	}
+	if !pg.IsRestoreOwnership {
+		args = append(args, "--no-owner")
+	}
+	if !pg.IsRestorePrivileges {
+		args = append(args, "--no-acl")
 	}
 
 	return uc.restoreFromStorage(

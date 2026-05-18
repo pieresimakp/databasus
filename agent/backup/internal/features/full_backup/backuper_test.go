@@ -40,7 +40,7 @@ func Test_RunFullBackup_WhenChainBroken_BasebackupTriggered(t *testing.T) {
 	var finalizeReceived bool
 	var finalizeBody map[string]any
 
-	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	server := newTestServer(t, withEnabledNextTime(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case testChainValidPath:
 			writeJSON(w, api.WalChainValidityResponse{
@@ -66,7 +66,7 @@ func Test_RunFullBackup_WhenChainBroken_BasebackupTriggered(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	})
+	}))
 
 	fb := newTestFullBackuper(server.URL)
 	fb.cmdBuilder = mockCmdBuilder(t, "test-backup-data", validStderr())
@@ -145,7 +145,7 @@ func Test_RunFullBackup_WhenNoFullBackupExists_ImmediateBasebackupTriggered(t *t
 	var mu sync.Mutex
 	var finalizeReceived bool
 
-	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	server := newTestServer(t, withEnabledNextTime(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case testChainValidPath:
 			writeJSON(w, api.WalChainValidityResponse{
@@ -164,7 +164,7 @@ func Test_RunFullBackup_WhenNoFullBackupExists_ImmediateBasebackupTriggered(t *t
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	})
+	}))
 
 	fb := newTestFullBackuper(server.URL)
 	fb.cmdBuilder = mockCmdBuilder(t, "first-backup-data", validStderr())
@@ -191,7 +191,7 @@ func Test_RunFullBackup_WhenUploadFails_RetriesAfterDelay(t *testing.T) {
 	var uploadAttempts int
 	var errorReported bool
 
-	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	server := newTestServer(t, withEnabledNextTime(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case testChainValidPath:
 			writeJSON(w, api.WalChainValidityResponse{
@@ -224,7 +224,7 @@ func Test_RunFullBackup_WhenUploadFails_RetriesAfterDelay(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	})
+	}))
 
 	fb := newTestFullBackuper(server.URL)
 	fb.cmdBuilder = mockCmdBuilder(t, "retry-backup-data", validStderr())
@@ -292,7 +292,7 @@ func Test_RunFullBackup_WhenAlreadyRunning_SkipsExecution(t *testing.T) {
 }
 
 func Test_RunFullBackup_WhenContextCancelled_StopsCleanly(t *testing.T) {
-	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	server := newTestServer(t, withEnabledNextTime(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case testChainValidPath:
 			writeJSON(w, api.WalChainValidityResponse{
@@ -309,7 +309,7 @@ func Test_RunFullBackup_WhenContextCancelled_StopsCleanly(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	})
+	}))
 
 	fb := newTestFullBackuper(server.URL)
 	fb.cmdBuilder = mockCmdBuilder(t, "data", validStderr())
@@ -376,7 +376,7 @@ func Test_RunFullBackup_WhenStderrParsingFails_FinalizesWithErrorAndRetries(t *t
 	var finalizeWithErrorReceived bool
 	var finalizeBody map[string]any
 
-	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	server := newTestServer(t, withEnabledNextTime(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case testChainValidPath:
 			writeJSON(w, api.WalChainValidityResponse{
@@ -402,7 +402,7 @@ func Test_RunFullBackup_WhenStderrParsingFails_FinalizesWithErrorAndRetries(t *t
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	})
+	}))
 
 	fb := newTestFullBackuper(server.URL)
 	fb.cmdBuilder = mockCmdBuilder(t, "data", "pg_basebackup: unexpected output with no LSN info")
@@ -431,24 +431,29 @@ func Test_RunFullBackup_WhenStderrParsingFails_FinalizesWithErrorAndRetries(t *t
 	assert.NotNil(t, finalizeBody["error"], "finalize should include error message")
 }
 
-func Test_RunFullBackup_WhenNextBackupTimeNull_BasebackupTriggered(t *testing.T) {
-	var mu sync.Mutex
-	var finalizeReceived bool
+func Test_RunFullBackup_WhenBackupsDisabled_NoBasebackupTriggered(t *testing.T) {
+	var chainCalled atomic.Bool
+	var uploadCalled atomic.Bool
 
 	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case testChainValidPath:
-			writeJSON(w, api.WalChainValidityResponse{IsValid: true})
 		case testNextBackupTimePath:
 			writeJSON(w, api.NextFullBackupTimeResponse{NextFullBackupTime: nil})
+		case testChainValidPath:
+			// Reproduces the issue #533 condition: even if the chain reports
+			// no_full_backup, the disabled gate must fire first and prevent any basebackup.
+			chainCalled.Store(true)
+
+			writeJSON(w, api.WalChainValidityResponse{
+				IsValid: false,
+				Error:   "no_full_backup",
+			})
 		case testFullStartPath:
+			uploadCalled.Store(true)
+
 			_, _ = io.ReadAll(r.Body)
 			writeJSON(w, map[string]string{"backupId": testBackupID})
 		case testFullCompletePath:
-			mu.Lock()
-			finalizeReceived = true
-			mu.Unlock()
-
 			w.WriteHeader(http.StatusOK)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -456,29 +461,25 @@ func Test_RunFullBackup_WhenNextBackupTimeNull_BasebackupTriggered(t *testing.T)
 	})
 
 	fb := newTestFullBackuper(server.URL)
-	fb.cmdBuilder = mockCmdBuilder(t, "first-run-data", validStderr())
+	fb.cmdBuilder = mockCmdBuilder(t, "should-not-run", validStderr())
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	go fb.Run(ctx)
-	waitForCondition(t, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return finalizeReceived
-	}, 5*time.Second)
+	time.Sleep(500 * time.Millisecond)
 	cancel()
 
-	mu.Lock()
-	defer mu.Unlock()
-
-	assert.True(t, finalizeReceived)
+	assert.False(t, chainCalled.Load(),
+		"chain validity must not be called when backups are disabled")
+	assert.False(t, uploadCalled.Load(),
+		"no basebackup upload must happen when backups are disabled")
 }
 
 func Test_RunFullBackup_WhenChainValidityReturns401_NoBasebackupTriggered(t *testing.T) {
 	var uploadReceived atomic.Bool
 
-	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	server := newTestServer(t, withEnabledNextTime(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case testChainValidPath:
 			w.WriteHeader(http.StatusUnauthorized)
@@ -493,7 +494,7 @@ func Test_RunFullBackup_WhenChainValidityReturns401_NoBasebackupTriggered(t *tes
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	})
+	}))
 
 	fb := newTestFullBackuper(server.URL)
 	fb.cmdBuilder = mockCmdBuilder(t, "data", validStderr())
@@ -512,7 +513,7 @@ func Test_RunFullBackup_WhenUploadSucceeds_BodyIsZstdCompressed(t *testing.T) {
 	var mu sync.Mutex
 	var receivedBody []byte
 
-	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	server := newTestServer(t, withEnabledNextTime(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case testChainValidPath:
 			writeJSON(w, api.WalChainValidityResponse{
@@ -532,7 +533,7 @@ func Test_RunFullBackup_WhenUploadSucceeds_BodyIsZstdCompressed(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	})
+	}))
 
 	originalContent := "test-backup-content-for-compression-check"
 	fb := newTestFullBackuper(server.URL)
@@ -700,6 +701,26 @@ pg_basebackup: write-ahead log end point: 0/2000100
 pg_basebackup: waiting for background process to finish streaming ...
 pg_basebackup: syncing data to disk ...
 pg_basebackup: base backup completed`
+}
+
+func writeEnabledFutureTime(w http.ResponseWriter) {
+	futureTime := time.Now().UTC().Add(24 * time.Hour)
+	writeJSON(w, api.NextFullBackupTimeResponse{NextFullBackupTime: &futureTime})
+}
+
+// withEnabledNextTime makes the test server respond to the next-full-backup-time endpoint
+// with "enabled, ~24h away" so tests that exercise other branches don't have to repeat
+// the boilerplate. Tests that care about a specific next-time (past, nil) handle it inline
+// and skip this wrapper.
+func withEnabledNextTime(inner http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == testNextBackupTimePath {
+			writeEnabledFutureTime(w)
+			return
+		}
+
+		inner(w, r)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

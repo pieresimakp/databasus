@@ -45,7 +45,7 @@ func (t *TelegramNotifier) Send(
 	heading string,
 	message string,
 ) error {
-	botToken, err := encryptor.Decrypt(t.NotifierID, t.BotToken)
+	botToken, err := encryptor.Decrypt(t.BotToken)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt bot token: %w", err)
 	}
@@ -109,7 +109,7 @@ func (t *TelegramNotifier) Update(incoming *TelegramNotifier) {
 
 func (t *TelegramNotifier) EncryptSensitiveData(encryptor encryption.FieldEncryptor) error {
 	if t.BotToken != "" {
-		encrypted, err := encryptor.Encrypt(t.NotifierID, t.BotToken)
+		encrypted, err := encryptor.Encrypt(t.BotToken)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt bot token: %w", err)
 		}

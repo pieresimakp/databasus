@@ -42,4 +42,13 @@ var (
 	ErrLocalStorageNotAllowedInCloudMode = errors.New(
 		"local storage can only be managed by administrators in cloud mode",
 	)
+	// Rclone accepts a freeform config blob whose `type =` may select backends
+	// that read arbitrary local files (`local`, `alias`, `combine`, `union`,
+	// `crypt`, `chunker`, `cache`) or initiate outbound connections to arbitrary
+	// hosts (`http`, `webdav`, `sftp`, `ftp`) — LFI and SSRF surface that we
+	// cannot expose to untrusted callers. Restrict to admins, who are the
+	// instance operators and won't harm their own deployment.
+	ErrRcloneStorageRequiresAdmin = errors.New(
+		"rclone storage can only be managed by administrators",
+	)
 )

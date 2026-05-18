@@ -97,7 +97,15 @@ func (d *Database) TestConnection(
 	logger *slog.Logger,
 	encryptor encryption.FieldEncryptor,
 ) error {
-	return d.getSpecificDatabase().TestConnection(logger, encryptor, d.ID)
+	return d.getSpecificDatabase().TestConnection(logger, encryptor)
+}
+
+func (d *Database) GetRawDbSizeMb(
+	ctx context.Context,
+	logger *slog.Logger,
+	encryptor encryption.FieldEncryptor,
+) (float64, error) {
+	return d.getSpecificDatabase().GetRawDbSizeMb(ctx, logger, encryptor)
 }
 
 func (d *Database) IsUserReadOnly(
@@ -107,13 +115,13 @@ func (d *Database) IsUserReadOnly(
 ) (bool, []string, error) {
 	switch d.Type {
 	case DatabaseTypePostgres:
-		return d.Postgresql.IsUserReadOnly(ctx, logger, encryptor, d.ID)
+		return d.Postgresql.IsUserReadOnly(ctx, logger, encryptor)
 	case DatabaseTypeMysql:
-		return d.Mysql.IsUserReadOnly(ctx, logger, encryptor, d.ID)
+		return d.Mysql.IsUserReadOnly(ctx, logger, encryptor)
 	case DatabaseTypeMariadb:
-		return d.Mariadb.IsUserReadOnly(ctx, logger, encryptor, d.ID)
+		return d.Mariadb.IsUserReadOnly(ctx, logger, encryptor)
 	case DatabaseTypeMongodb:
-		return d.Mongodb.IsUserReadOnly(ctx, logger, encryptor, d.ID)
+		return d.Mongodb.IsUserReadOnly(ctx, logger, encryptor)
 	default:
 		return false, nil, errors.New("read-only check not supported for this database type")
 	}
@@ -125,16 +133,16 @@ func (d *Database) HideSensitiveData() {
 
 func (d *Database) EncryptSensitiveFields(encryptor encryption.FieldEncryptor) error {
 	if d.Postgresql != nil {
-		return d.Postgresql.EncryptSensitiveFields(d.ID, encryptor)
+		return d.Postgresql.EncryptSensitiveFields(encryptor)
 	}
 	if d.Mysql != nil {
-		return d.Mysql.EncryptSensitiveFields(d.ID, encryptor)
+		return d.Mysql.EncryptSensitiveFields(encryptor)
 	}
 	if d.Mariadb != nil {
-		return d.Mariadb.EncryptSensitiveFields(d.ID, encryptor)
+		return d.Mariadb.EncryptSensitiveFields(encryptor)
 	}
 	if d.Mongodb != nil {
-		return d.Mongodb.EncryptSensitiveFields(d.ID, encryptor)
+		return d.Mongodb.EncryptSensitiveFields(encryptor)
 	}
 	return nil
 }
@@ -144,16 +152,16 @@ func (d *Database) PopulateDbData(
 	encryptor encryption.FieldEncryptor,
 ) error {
 	if d.Postgresql != nil {
-		return d.Postgresql.PopulateDbData(logger, encryptor, d.ID)
+		return d.Postgresql.PopulateDbData(logger, encryptor)
 	}
 	if d.Mysql != nil {
-		return d.Mysql.PopulateDbData(logger, encryptor, d.ID)
+		return d.Mysql.PopulateDbData(logger, encryptor)
 	}
 	if d.Mariadb != nil {
-		return d.Mariadb.PopulateDbData(logger, encryptor, d.ID)
+		return d.Mariadb.PopulateDbData(logger, encryptor)
 	}
 	if d.Mongodb != nil {
-		return d.Mongodb.PopulateDbData(logger, encryptor, d.ID)
+		return d.Mongodb.PopulateDbData(logger, encryptor)
 	}
 	return nil
 }

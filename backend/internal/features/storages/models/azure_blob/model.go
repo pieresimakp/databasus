@@ -294,14 +294,14 @@ func (s *AzureBlobStorage) EncryptSensitiveData(encryptor encryption.FieldEncryp
 	var err error
 
 	if s.ConnectionString != "" {
-		s.ConnectionString, err = encryptor.Encrypt(s.StorageID, s.ConnectionString)
+		s.ConnectionString, err = encryptor.Encrypt(s.ConnectionString)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt Azure connection string: %w", err)
 		}
 	}
 
 	if s.AccountKey != "" {
-		s.AccountKey, err = encryptor.Encrypt(s.StorageID, s.AccountKey)
+		s.AccountKey, err = encryptor.Encrypt(s.AccountKey)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt Azure account key: %w", err)
 		}
@@ -351,7 +351,7 @@ func (s *AzureBlobStorage) getClient(encryptor encryption.FieldEncryptor) (*azbl
 
 	switch s.AuthMethod {
 	case AuthMethodConnectionString:
-		connectionString, decryptErr := encryptor.Decrypt(s.StorageID, s.ConnectionString)
+		connectionString, decryptErr := encryptor.Decrypt(s.ConnectionString)
 		if decryptErr != nil {
 			return nil, fmt.Errorf("failed to decrypt Azure connection string: %w", decryptErr)
 		}
@@ -364,7 +364,7 @@ func (s *AzureBlobStorage) getClient(encryptor encryption.FieldEncryptor) (*azbl
 			)
 		}
 	case AuthMethodAccountKey:
-		accountKey, decryptErr := encryptor.Decrypt(s.StorageID, s.AccountKey)
+		accountKey, decryptErr := encryptor.Decrypt(s.AccountKey)
 		if decryptErr != nil {
 			return nil, fmt.Errorf("failed to decrypt Azure account key: %w", decryptErr)
 		}

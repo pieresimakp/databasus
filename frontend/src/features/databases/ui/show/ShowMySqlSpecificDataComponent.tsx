@@ -47,6 +47,13 @@ export const ShowMySqlSpecificDataComponent = ({ database }: Props) => {
         <div className="min-w-[150px]">Use HTTPS</div>
         <div>{database.mysql?.isHttps ? 'Yes' : 'No'}</div>
       </div>
+
+      {!!database.mysql?.excludeTables?.length && (
+        <div className="mb-1 flex w-full items-center">
+          <div className="min-w-[150px]">Exclude tables</div>
+          <div>{database.mysql.excludeTables.join(', ')}</div>
+        </div>
+      )}
     </div>
   );
 };
