@@ -297,14 +297,14 @@ func (s *GoogleDriveStorage) EncryptSensitiveData(encryptor encryption.FieldEncr
 	var err error
 
 	if s.ClientSecret != "" {
-		s.ClientSecret, err = encryptor.Encrypt(s.StorageID, s.ClientSecret)
+		s.ClientSecret, err = encryptor.Encrypt(s.ClientSecret)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt Google Drive client secret: %w", err)
 		}
 	}
 
 	if s.TokenJSON != "" {
-		s.TokenJSON, err = encryptor.Encrypt(s.StorageID, s.TokenJSON)
+		s.TokenJSON, err = encryptor.Encrypt(s.TokenJSON)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt Google Drive token JSON: %w", err)
 		}
@@ -407,12 +407,12 @@ func (s *GoogleDriveStorage) refreshToken(encryptor encryption.FieldEncryptor) e
 	}
 
 	// Decrypt credentials before use
-	clientSecret, err := encryptor.Decrypt(s.StorageID, s.ClientSecret)
+	clientSecret, err := encryptor.Decrypt(s.ClientSecret)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt Google Drive client secret: %w", err)
 	}
 
-	tokenJSON, err := encryptor.Decrypt(s.StorageID, s.TokenJSON)
+	tokenJSON, err := encryptor.Decrypt(s.TokenJSON)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt Google Drive token JSON: %w", err)
 	}
@@ -519,12 +519,12 @@ func (s *GoogleDriveStorage) getDriveService(
 		return nil, err
 	}
 
-	clientSecret, err := encryptor.Decrypt(s.StorageID, s.ClientSecret)
+	clientSecret, err := encryptor.Decrypt(s.ClientSecret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt Google Drive client secret: %w", err)
 	}
 
-	tokenJSON, err := encryptor.Decrypt(s.StorageID, s.TokenJSON)
+	tokenJSON, err := encryptor.Decrypt(s.TokenJSON)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt Google Drive token JSON: %w", err)
 	}

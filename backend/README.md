@@ -1,7 +1,6 @@
 # Before run
 
 > Copy .env.example to .env in the repo root (single source for backend, frontend, and docker compose)
-> Copy docker-compose.example.yml to docker-compose.yml in the repo root (for development only)
 
 # Run
 

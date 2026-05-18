@@ -23,13 +23,7 @@ export function ConfirmationComponent({
   hideCancelButton = false,
 }: Props): JSX.Element {
   return (
-    <Modal
-      title="Confirmation"
-      open
-      onClose={() => onDecline()}
-      onCancel={() => onDecline()}
-      footer={<div />}
-    >
+    <Modal title="Confirmation" open onCancel={() => onDecline()} footer={<div />}>
       <div dangerouslySetInnerHTML={{ __html: description }} />
 
       <div className="mt-5 flex">

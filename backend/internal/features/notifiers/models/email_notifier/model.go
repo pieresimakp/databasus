@@ -68,7 +68,7 @@ func (e *EmailNotifier) Send(
 ) error {
 	var smtpPassword string
 	if e.SMTPPassword != "" {
-		decrypted, err := encryptor.Decrypt(e.NotifierID, e.SMTPPassword)
+		decrypted, err := encryptor.Decrypt(e.SMTPPassword)
 		if err != nil {
 			return fmt.Errorf("failed to decrypt SMTP password: %w", err)
 		}
@@ -111,7 +111,7 @@ func (e *EmailNotifier) Update(incoming *EmailNotifier) {
 
 func (e *EmailNotifier) EncryptSensitiveData(encryptor encryption.FieldEncryptor) error {
 	if e.SMTPPassword != "" {
-		encrypted, err := encryptor.Encrypt(e.NotifierID, e.SMTPPassword)
+		encrypted, err := encryptor.Encrypt(e.SMTPPassword)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt SMTP password: %w", err)
 		}

@@ -82,14 +82,14 @@ func (uc *CreatePostgresqlBackupUsecase) Execute(
 
 	args := uc.buildPgDumpArgs(pg)
 
-	decryptedPassword, err := uc.fieldEncryptor.Decrypt(db.ID, pg.Password)
+	decryptedPassword, err := uc.fieldEncryptor.Decrypt(pg.Password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt database password: %w", err)
 	}
 
 	var sslCaPath, sslCertPath, sslKeyPath string
 	if pg.SslCa != "" {
-		ca, err := uc.fieldEncryptor.Decrypt(db.ID, pg.SslCa)
+		ca, err := uc.fieldEncryptor.Decrypt(pg.SslCa)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt SSL CA: %w", err)
 		}
@@ -100,7 +100,7 @@ func (uc *CreatePostgresqlBackupUsecase) Execute(
 	}
 
 	if pg.SslCert != "" {
-		cert, err := uc.fieldEncryptor.Decrypt(db.ID, pg.SslCert)
+		cert, err := uc.fieldEncryptor.Decrypt(pg.SslCert)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt SSL cert: %w", err)
 		}
@@ -111,7 +111,7 @@ func (uc *CreatePostgresqlBackupUsecase) Execute(
 	}
 
 	if pg.SslKey != "" {
-		key, err := uc.fieldEncryptor.Decrypt(db.ID, pg.SslKey)
+		key, err := uc.fieldEncryptor.Decrypt(pg.SslKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt SSL key: %w", err)
 		}
@@ -132,6 +132,15 @@ func (uc *CreatePostgresqlBackupUsecase) Execute(
 			_ = os.Remove(sslKeyPath)
 		}
 	}()
+
+	rawSizeMB, err := pg.GetRawDbSizeMb(ctx, uc.logger, uc.fieldEncryptor)
+	if err != nil {
+		uc.logger.Warn("failed to fetch raw db size before backup",
+			"database_id", db.ID,
+			"error", err)
+	} else {
+		backup.BackupRawDbSizeMb = rawSizeMB
+	}
 
 	return uc.streamToStorage(
 		ctx,
@@ -237,6 +246,10 @@ func (uc *CreatePostgresqlBackupUsecase) streamToStorage(
 			backup.FileName,
 			storageReader,
 		)
+		if saveErr != nil {
+			_ = storageReader.CloseWithError(saveErr)
+			cancel()
+		}
 		saveErrCh <- saveErr
 	}()
 
@@ -262,6 +275,16 @@ func (uc *CreatePostgresqlBackupUsecase) streamToStorage(
 	copyErr := <-copyResultCh
 	bytesWritten := <-bytesWrittenCh
 	waitErr := cmd.Wait()
+
+	select {
+	case earlySaveErr := <-saveErrCh:
+		if earlySaveErr != nil {
+			_ = uc.closeWriters(encryptionWriter, storageWriter)
+			return nil, fmt.Errorf("save to storage: %w", earlySaveErr)
+		}
+		saveErrCh <- nil
+	default:
+	}
 
 	select {
 	case <-ctx.Done():
@@ -395,6 +418,10 @@ func (uc *CreatePostgresqlBackupUsecase) buildPgDumpArgs(pg *pgtypes.PostgresqlD
 
 	for _, schema := range pg.IncludeSchemas {
 		args = append(args, "-n", schema)
+	}
+
+	for _, table := range pg.ExcludeTables {
+		args = append(args, "--exclude-table="+table)
 	}
 
 	compressionArgs := uc.getCompressionArgs(pg.Version)

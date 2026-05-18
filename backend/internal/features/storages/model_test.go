@@ -392,6 +392,69 @@ func validateEnvVariables(t *testing.T) {
 	assert.NotEmpty(t, env.TestNASPort, "TEST_NAS_PORT is empty")
 }
 
+func Test_RcloneStorage_DeleteFile_WhenAuthFailsOnLookup_ReturnsErrorAndDoesNotDeleteObject(t *testing.T) {
+	ctx := t.Context()
+
+	validateEnvVariables(t)
+
+	s3Container, err := setupS3Container(ctx)
+	require.NoError(t, err)
+
+	minioClient, err := minio.New(s3Container.endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(s3Container.accessKey, s3Container.secretKey, ""),
+		Secure: false,
+		Region: s3Container.region,
+	})
+	require.NoError(t, err)
+
+	fileID := uuid.New().String()
+	testData := []byte("rclone delete bug repro")
+
+	_, err = minioClient.PutObject(
+		ctx,
+		s3Container.bucketName,
+		fileID,
+		bytes.NewReader(testData),
+		int64(len(testData)),
+		minio.PutObjectOptions{},
+	)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = minioClient.RemoveObject(
+			context.Background(),
+			s3Container.bucketName,
+			fileID,
+			minio.RemoveObjectOptions{},
+		)
+	})
+
+	rcloneStorage := &rclone_storage.RcloneStorage{
+		StorageID: uuid.New(),
+		ConfigContent: fmt.Sprintf(`[minio]
+type = s3
+provider = Other
+access_key_id = %s
+secret_access_key = totally-wrong-secret-key
+endpoint = http://%s
+acl = private`, s3Container.accessKey, s3Container.endpoint),
+		RemotePath: s3Container.bucketName,
+	}
+
+	encryptor := encryption.GetFieldEncryptor()
+
+	err = rcloneStorage.DeleteFile(encryptor, fileID)
+	require.Error(t, err)
+
+	_, statErr := minioClient.StatObject(
+		ctx,
+		s3Container.bucketName,
+		fileID,
+		minio.StatObjectOptions{},
+	)
+	assert.NoError(t, statErr)
+}
+
 func Test_StorageUpdate_WhenExistingStorageHasNilS3_AssignsIncomingS3(t *testing.T) {
 	storageID := uuid.New()
 

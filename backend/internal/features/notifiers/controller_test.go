@@ -490,7 +490,7 @@ func Test_NotifierSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					isEncrypted(notifier.TelegramNotifier.BotToken),
 					"BotToken should be encrypted in DB",
 				)
-				decrypted := decryptField(t, notifier.ID, notifier.TelegramNotifier.BotToken)
+				decrypted := decryptField(t, notifier.TelegramNotifier.BotToken)
 				assert.Equal(t, "original-bot-token-12345", decrypted)
 			},
 			verifyHiddenData: func(t *testing.T, notifier *Notifier) {
@@ -535,7 +535,7 @@ func Test_NotifierSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					isEncrypted(notifier.EmailNotifier.SMTPPassword),
 					"SMTPPassword should be encrypted in DB",
 				)
-				decrypted := decryptField(t, notifier.ID, notifier.EmailNotifier.SMTPPassword)
+				decrypted := decryptField(t, notifier.EmailNotifier.SMTPPassword)
 				assert.Equal(t, "original-password-secret", decrypted)
 			},
 			verifyHiddenData: func(t *testing.T, notifier *Notifier) {
@@ -574,7 +574,7 @@ func Test_NotifierSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					isEncrypted(notifier.SlackNotifier.BotToken),
 					"BotToken should be encrypted in DB",
 				)
-				decrypted := decryptField(t, notifier.ID, notifier.SlackNotifier.BotToken)
+				decrypted := decryptField(t, notifier.SlackNotifier.BotToken)
 				assert.Equal(t, "xoxb-original-slack-token", decrypted)
 			},
 			verifyHiddenData: func(t *testing.T, notifier *Notifier) {
@@ -613,7 +613,6 @@ func Test_NotifierSensitiveDataLifecycle_AllTypes(t *testing.T) {
 				)
 				decrypted := decryptField(
 					t,
-					notifier.ID,
 					notifier.DiscordNotifier.ChannelWebhookURL,
 				)
 				assert.Equal(t, "https://discord.com/api/webhooks/123/original-token", decrypted)
@@ -652,7 +651,7 @@ func Test_NotifierSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					isEncrypted(notifier.TeamsNotifier.WebhookURL),
 					"WebhookURL should be encrypted in DB",
 				)
-				decrypted := decryptField(t, notifier.ID, notifier.TeamsNotifier.WebhookURL)
+				decrypted := decryptField(t, notifier.TeamsNotifier.WebhookURL)
 				assert.Equal(
 					t,
 					"https://outlook.office.com/webhook/original-token",
@@ -710,7 +709,6 @@ func Test_NotifierSensitiveDataLifecycle_AllTypes(t *testing.T) {
 				)
 				decrypted := decryptField(
 					t,
-					notifier.ID,
 					notifier.WebhookNotifier.Headers[0].Value,
 				)
 				assert.Equal(t, "Bearer updated-token", decrypted)
@@ -831,7 +829,7 @@ func Test_CreateNotifier_AllSensitiveFieldsEncryptedInDB(t *testing.T) {
 					isEncrypted(notifier.TelegramNotifier.BotToken),
 					"BotToken should be encrypted",
 				)
-				decrypted := decryptField(t, notifier.ID, notifier.TelegramNotifier.BotToken)
+				decrypted := decryptField(t, notifier.TelegramNotifier.BotToken)
 				assert.Equal(t, "plain-telegram-token-123", decrypted)
 			},
 		},
@@ -858,7 +856,7 @@ func Test_CreateNotifier_AllSensitiveFieldsEncryptedInDB(t *testing.T) {
 					isEncrypted(notifier.EmailNotifier.SMTPPassword),
 					"SMTPPassword should be encrypted",
 				)
-				decrypted := decryptField(t, notifier.ID, notifier.EmailNotifier.SMTPPassword)
+				decrypted := decryptField(t, notifier.EmailNotifier.SMTPPassword)
 				assert.Equal(t, "plain-smtp-password-456", decrypted)
 			},
 		},
@@ -881,7 +879,7 @@ func Test_CreateNotifier_AllSensitiveFieldsEncryptedInDB(t *testing.T) {
 					isEncrypted(notifier.SlackNotifier.BotToken),
 					"BotToken should be encrypted",
 				)
-				decrypted := decryptField(t, notifier.ID, notifier.SlackNotifier.BotToken)
+				decrypted := decryptField(t, notifier.SlackNotifier.BotToken)
 				assert.Equal(t, "plain-slack-token-789", decrypted)
 			},
 		},
@@ -905,7 +903,6 @@ func Test_CreateNotifier_AllSensitiveFieldsEncryptedInDB(t *testing.T) {
 				)
 				decrypted := decryptField(
 					t,
-					notifier.ID,
 					notifier.DiscordNotifier.ChannelWebhookURL,
 				)
 				assert.Equal(t, "https://discord.com/api/webhooks/123/abc", decrypted)
@@ -929,7 +926,7 @@ func Test_CreateNotifier_AllSensitiveFieldsEncryptedInDB(t *testing.T) {
 					isEncrypted(notifier.TeamsNotifier.WebhookURL),
 					"WebhookURL should be encrypted",
 				)
-				decrypted := decryptField(t, notifier.ID, notifier.TeamsNotifier.WebhookURL)
+				decrypted := decryptField(t, notifier.TeamsNotifier.WebhookURL)
 				assert.Equal(t, "https://outlook.office.com/webhook/test123", decrypted)
 			},
 		},
@@ -969,7 +966,6 @@ func Test_CreateNotifier_AllSensitiveFieldsEncryptedInDB(t *testing.T) {
 				)
 				decrypted1 := decryptField(
 					t,
-					notifier.ID,
 					notifier.WebhookNotifier.Headers[0].Value,
 				)
 				assert.Equal(t, "Bearer secret-token-12345", decrypted1)
@@ -981,7 +977,6 @@ func Test_CreateNotifier_AllSensitiveFieldsEncryptedInDB(t *testing.T) {
 				)
 				decrypted2 := decryptField(
 					t,
-					notifier.ID,
 					notifier.WebhookNotifier.Headers[1].Value,
 				)
 				assert.Equal(t, "api-key-67890", decrypted2)
@@ -1288,9 +1283,9 @@ func isEncrypted(value string) bool {
 	return len(value) > 4 && value[:4] == "enc:"
 }
 
-func decryptField(t *testing.T, notifierID uuid.UUID, encryptedValue string) string {
+func decryptField(t *testing.T, encryptedValue string) string {
 	encryptor := GetNotifierService().fieldEncryptor
-	decrypted, err := encryptor.Decrypt(notifierID, encryptedValue)
+	decrypted, err := encryptor.Decrypt(encryptedValue)
 	assert.NoError(t, err)
 	return decrypted
 }

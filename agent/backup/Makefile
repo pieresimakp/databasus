@@ -17,6 +17,8 @@ run:
 		--pg-wal-dir ../wal-queue \
 		--skip-update
 
+# We are using it to make PostgreSQL produce WAL segments
+# so out development agent can capture it and we can develop
 wal-generator:
 	go run cmd/wal-generator/main.go
 
@@ -30,6 +32,8 @@ lint:
 	golangci-lint fmt ./cmd/... ./internal/... ./e2e/... && golangci-lint run ./cmd/... ./internal/... ./e2e/...
 
 e2e:
+	cd e2e && docker compose down -v --remove-orphans 2>/dev/null || true
+	rm -rf e2e/pgdata e2e/artifacts
 	cd e2e && docker compose build --no-cache e2e-mock-server
 	cd e2e && docker compose build
 	cd e2e && docker compose run --rm e2e-agent-builder

@@ -70,6 +70,13 @@ export const ShowPostgreSqlSpecificDataComponent = ({ database }: Props) => {
           <div>{database.postgresql.includeSchemas.join(', ')}</div>
         </div>
       )}
+
+      {!!database.postgresql?.excludeTables?.length && (
+        <div className="mb-1 flex w-full items-center">
+          <div className="min-w-[150px]">Exclude tables</div>
+          <div>{database.postgresql.excludeTables.join(', ')}</div>
+        </div>
+      )}
     </>
   );
 

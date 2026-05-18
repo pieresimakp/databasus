@@ -1,10 +1,10 @@
 module databasus-agent
 
-go 1.26.1
+go 1.26.3
 
 require (
 	github.com/go-resty/resty/v2 v2.17.2
-	github.com/jackc/pgx/v5 v5.8.0
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/klauspost/compress v1.18.4
 	github.com/stretchr/testify v1.11.1
 )

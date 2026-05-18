@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,8 +35,9 @@ type BackupsScheduler struct {
 	lastBackupTime time.Time
 	logger         *slog.Logger
 
-	backupToNodeRelations map[uuid.UUID]BackupToNodeRelation
-	backuperNode          *BackuperNode
+	backupToNodeRelations    map[uuid.UUID]BackupToNodeRelation
+	backupToNodeRelationsMtx sync.Mutex
+	backuperNode             *BackuperNode
 
 	hasRun atomic.Bool
 }
@@ -247,6 +250,7 @@ func (s *BackupsScheduler) StartBackup(database *databases.Database, isCallNotif
 		return
 	}
 
+	s.backupToNodeRelationsMtx.Lock()
 	if relation, exists := s.backupToNodeRelations[*leastBusyNodeID]; exists {
 		relation.BackupsIDs = append(relation.BackupsIDs, backup.ID)
 		s.backupToNodeRelations[*leastBusyNodeID] = relation
@@ -256,6 +260,7 @@ func (s *BackupsScheduler) StartBackup(database *databases.Database, isCallNotif
 			[]uuid.UUID{backup.ID},
 		}
 	}
+	s.backupToNodeRelationsMtx.Unlock()
 
 	s.logger.Info(
 		"Successfully triggered scheduled backup",
@@ -495,8 +500,10 @@ func (s *BackupsScheduler) onBackupCompleted(nodeID, backupID uuid.UUID) {
 		return
 	}
 
+	s.backupToNodeRelationsMtx.Lock()
 	relation, exists := s.backupToNodeRelations[nodeID]
 	if !exists {
+		s.backupToNodeRelationsMtx.Unlock()
 		s.logger.Warn(
 			"Received completion for unknown node",
 			"nodeId",
@@ -518,6 +525,7 @@ func (s *BackupsScheduler) onBackupCompleted(nodeID, backupID uuid.UUID) {
 	}
 
 	if !found {
+		s.backupToNodeRelationsMtx.Unlock()
 		s.logger.Warn(
 			"Backup not found in node's backup list",
 			"nodeId",
@@ -534,6 +542,7 @@ func (s *BackupsScheduler) onBackupCompleted(nodeID, backupID uuid.UUID) {
 		relation.BackupsIDs = newBackupIDs
 		s.backupToNodeRelations[nodeID] = relation
 	}
+	s.backupToNodeRelationsMtx.Unlock()
 
 	if err := s.backupNodesRegistry.DecrementBackupsInProgress(nodeID); err != nil {
 		s.logger.Error(
@@ -559,7 +568,12 @@ func (s *BackupsScheduler) checkDeadNodesAndFailBackups() error {
 		aliveNodeIDs[node.ID] = true
 	}
 
-	for nodeID, relation := range s.backupToNodeRelations {
+	s.backupToNodeRelationsMtx.Lock()
+	relationsSnapshot := make(map[uuid.UUID]BackupToNodeRelation, len(s.backupToNodeRelations))
+	maps.Copy(relationsSnapshot, s.backupToNodeRelations)
+	s.backupToNodeRelationsMtx.Unlock()
+
+	for nodeID, relation := range relationsSnapshot {
 		if aliveNodeIDs[nodeID] {
 			continue
 		}
@@ -626,7 +640,9 @@ func (s *BackupsScheduler) checkDeadNodesAndFailBackups() error {
 			)
 		}
 
+		s.backupToNodeRelationsMtx.Lock()
 		delete(s.backupToNodeRelations, nodeID)
+		s.backupToNodeRelationsMtx.Unlock()
 	}
 
 	return nil

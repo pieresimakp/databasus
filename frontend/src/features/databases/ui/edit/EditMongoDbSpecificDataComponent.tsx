@@ -1,5 +1,5 @@
 import { CopyOutlined, DownOutlined, InfoCircleOutlined, UpOutlined } from '@ant-design/icons';
-import { App, Button, Input, InputNumber, Switch, Tooltip } from 'antd';
+import { App, Button, Input, InputNumber, Select, Switch, Tooltip } from 'antd';
 import { useEffect, useState } from 'react';
 
 import { IS_CLOUD } from '../../../../constants';
@@ -51,7 +51,8 @@ export const EditMongoDbSpecificDataComponent = ({
   const hasAdvancedValues =
     !!database.mongodb?.authDatabase ||
     !!database.mongodb?.isSrv ||
-    !!database.mongodb?.isDirectConnection;
+    !!database.mongodb?.isDirectConnection ||
+    !!database.mongodb?.excludeCollections?.length;
   const [isShowAdvanced, setShowAdvanced] = useState(hasAdvancedValues);
 
   const [isShowPasteModal, setIsShowPasteModal] = useState(false);
@@ -464,6 +465,33 @@ export const EditMongoDbSpecificDataComponent = ({
               className="max-w-[200px] grow"
               placeholder="admin"
             />
+          </div>
+
+          <div className="mb-1 flex w-full items-center">
+            <div className="min-w-[150px]">Exclude collections</div>
+            <Select
+              mode="tags"
+              value={editingDatabase.mongodb?.excludeCollections || []}
+              onChange={(values) => {
+                if (!editingDatabase.mongodb) return;
+
+                setEditingDatabase({
+                  ...editingDatabase,
+                  mongodb: { ...editingDatabase.mongodb, excludeCollections: values },
+                });
+              }}
+              size="small"
+              className="max-w-[200px] grow"
+              placeholder="No collections excluded"
+              tokenSeparators={[',']}
+            />
+
+            <Tooltip
+              className="cursor-pointer"
+              title="Collection names to exclude from the backup."
+            >
+              <InfoCircleOutlined className="ml-2" style={{ color: 'gray' }} />
+            </Tooltip>
           </div>
         </>
       )}

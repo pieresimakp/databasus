@@ -67,9 +67,18 @@ func (uc *CreateMongodbBackupUsecase) Execute(
 		return nil, fmt.Errorf("database name is required for mongodump backups")
 	}
 
-	decryptedPassword, err := uc.fieldEncryptor.Decrypt(db.ID, mdb.Password)
+	decryptedPassword, err := uc.fieldEncryptor.Decrypt(mdb.Password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt database password: %w", err)
+	}
+
+	rawSizeMB, err := mdb.GetRawDbSizeMb(ctx, uc.logger, uc.fieldEncryptor)
+	if err != nil {
+		uc.logger.Warn("failed to fetch raw db size before backup",
+			"database_id", db.ID,
+			"error", err)
+	} else {
+		backup.BackupRawDbSizeMb = rawSizeMB
 	}
 
 	args := uc.buildMongodumpArgs(mdb, decryptedPassword)
@@ -89,13 +98,16 @@ func (uc *CreateMongodbBackupUsecase) buildMongodumpArgs(
 	mdb *mongodbtypes.MongodbDatabase,
 	password string,
 ) []string {
-	uri := mdb.BuildMongodumpURI(password)
+	uri := mdb.BuildConnectionURI(password)
 
 	args := []string{
 		"--uri=" + uri,
-		"--db=" + mdb.Database,
 		"--archive",
 		"--gzip",
+	}
+
+	for _, collection := range mdb.ExcludeCollections {
+		args = append(args, "--excludeCollection="+collection)
 	}
 
 	// Use numParallelCollections based on CPU count
@@ -178,6 +190,10 @@ func (uc *CreateMongodbBackupUsecase) streamToStorage(
 			backup.FileName,
 			storageReader,
 		)
+		if saveErr != nil {
+			_ = storageReader.CloseWithError(saveErr)
+			cancel()
+		}
 		saveErrCh <- saveErr
 	}()
 
@@ -201,6 +217,16 @@ func (uc *CreateMongodbBackupUsecase) streamToStorage(
 	copyErr := <-copyResultCh
 	bytesWritten := <-bytesWrittenCh
 	waitErr := cmd.Wait()
+
+	select {
+	case earlySaveErr := <-saveErrCh:
+		if earlySaveErr != nil {
+			_ = uc.closeWriters(encryptionWriter, storageWriter)
+			return nil, fmt.Errorf("save to storage: %w", earlySaveErr)
+		}
+		saveErrCh <- nil
+	default:
+	}
 
 	select {
 	case <-ctx.Done():

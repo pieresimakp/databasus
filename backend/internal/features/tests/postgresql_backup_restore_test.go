@@ -196,6 +196,54 @@ func Test_BackupAndRestorePostgresql_WithoutExcludeExtensions_ExtensionsAreRecov
 	}
 }
 
+func Test_BackupAndRestorePostgresql_WithRestoreOwnership_OwnerIsRestored(t *testing.T) {
+	env := config.GetEnv()
+	cases := []struct {
+		name    string
+		version string
+		port    string
+	}{
+		{"PostgreSQL 12", "12", env.TestPostgres12Port},
+		{"PostgreSQL 13", "13", env.TestPostgres13Port},
+		{"PostgreSQL 14", "14", env.TestPostgres14Port},
+		{"PostgreSQL 15", "15", env.TestPostgres15Port},
+		{"PostgreSQL 16", "16", env.TestPostgres16Port},
+		{"PostgreSQL 17", "17", env.TestPostgres17Port},
+		{"PostgreSQL 18", "18", env.TestPostgres18Port},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testBackupRestoreWithRestoreOwnershipForVersion(t, tc.version, tc.port)
+		})
+	}
+}
+
+func Test_BackupAndRestorePostgresql_WithRestorePrivileges_GrantIsRestored(t *testing.T) {
+	env := config.GetEnv()
+	cases := []struct {
+		name    string
+		version string
+		port    string
+	}{
+		{"PostgreSQL 12", "12", env.TestPostgres12Port},
+		{"PostgreSQL 13", "13", env.TestPostgres13Port},
+		{"PostgreSQL 14", "14", env.TestPostgres14Port},
+		{"PostgreSQL 15", "15", env.TestPostgres15Port},
+		{"PostgreSQL 16", "16", env.TestPostgres16Port},
+		{"PostgreSQL 17", "17", env.TestPostgres17Port},
+		{"PostgreSQL 18", "18", env.TestPostgres18Port},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testBackupRestoreWithRestorePrivilegesForVersion(t, tc.version, tc.port)
+		})
+	}
+}
+
 func Test_BackupPostgresql_SchemaSelection_OnlySpecifiedSchemas(t *testing.T) {
 	env := config.GetEnv()
 	cases := []struct {
@@ -216,6 +264,56 @@ func Test_BackupPostgresql_SchemaSelection_OnlySpecifiedSchemas(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			testSchemaSelectionOnlySpecifiedSchemasForVersion(t, tc.version, tc.port)
+		})
+	}
+}
+
+func Test_BackupAndRestorePostgresql_WithExcludeTables_ExcludedTablesNotRestored(t *testing.T) {
+	env := config.GetEnv()
+	cases := []struct {
+		name    string
+		version string
+		port    string
+	}{
+		{"PostgreSQL 12", "12", env.TestPostgres12Port},
+		{"PostgreSQL 13", "13", env.TestPostgres13Port},
+		{"PostgreSQL 14", "14", env.TestPostgres14Port},
+		{"PostgreSQL 15", "15", env.TestPostgres15Port},
+		{"PostgreSQL 16", "16", env.TestPostgres16Port},
+		{"PostgreSQL 17", "17", env.TestPostgres17Port},
+		{"PostgreSQL 18", "18", env.TestPostgres18Port},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testBackupRestoreWithExcludeTablesForVersion(t, tc.version, tc.port)
+		})
+	}
+}
+
+func Test_BackupAndRestorePostgresql_WithSchemasAndExcludeTables_OnlyIncludedSchemasMinusExcludedTablesRestored(
+	t *testing.T,
+) {
+	env := config.GetEnv()
+	cases := []struct {
+		name    string
+		version string
+		port    string
+	}{
+		{"PostgreSQL 12", "12", env.TestPostgres12Port},
+		{"PostgreSQL 13", "13", env.TestPostgres13Port},
+		{"PostgreSQL 14", "14", env.TestPostgres14Port},
+		{"PostgreSQL 15", "15", env.TestPostgres15Port},
+		{"PostgreSQL 16", "16", env.TestPostgres16Port},
+		{"PostgreSQL 17", "17", env.TestPostgres17Port},
+		{"PostgreSQL 18", "18", env.TestPostgres18Port},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testSchemasWithExcludeTablesForVersion(t, tc.version, tc.port)
 		})
 	}
 }
@@ -753,6 +851,241 @@ func testBackupRestoreWithoutExcludeExtensionsForVersion(
 	workspaces_testing.RemoveTestWorkspace(workspace, router)
 }
 
+func testBackupRestoreWithRestoreOwnershipForVersion(t *testing.T, pgVersion, port string) {
+	container, err := connectToPostgresContainer(pgVersion, port)
+	assert.NoError(t, err)
+	defer func() {
+		if container.DB != nil {
+			container.DB.Close()
+		}
+	}()
+
+	suffix := uuid.New().String()[:8]
+	ownerRole := fmt.Sprintf("test_owner_%s", suffix)
+	tableName := fmt.Sprintf("test_ownership_data_%s", suffix)
+
+	_, err = container.DB.Exec(fmt.Sprintf(`
+		DROP TABLE IF EXISTS %s;
+		DROP ROLE IF EXISTS %s;
+		CREATE ROLE %s LOGIN PASSWORD 'placeholder';
+		CREATE TABLE %s (
+			id SERIAL PRIMARY KEY,
+			name TEXT NOT NULL,
+			value INTEGER NOT NULL
+		);
+		ALTER TABLE %s OWNER TO %s;
+		INSERT INTO %s (name, value) VALUES ('a', 1), ('b', 2), ('c', 3);
+	`, tableName, ownerRole, ownerRole, tableName, tableName, ownerRole, tableName))
+	assert.NoError(t, err)
+
+	defer func() {
+		_, _ = container.DB.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s;", tableName))
+		_, _ = container.DB.Exec(fmt.Sprintf("DROP ROLE IF EXISTS %s;", ownerRole))
+	}()
+
+	router := createTestRouter()
+	user := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	workspace := workspaces_testing.CreateTestWorkspace("Ownership Test Workspace", user, router)
+
+	storage := storages.CreateTestStorage(workspace.ID)
+
+	database := createDatabaseViaAPI(
+		t, router, "Ownership Test Database", workspace.ID,
+		container.Host, container.Port,
+		container.Username, container.Password, container.Database,
+		user.Token,
+	)
+
+	enableBackupsViaAPI(
+		t, router, database.ID, storage.ID,
+		backups_config.BackupEncryptionNone, user.Token,
+	)
+
+	createBackupViaAPI(t, router, database.ID, user.Token)
+
+	backup := waitForBackupCompletion(t, router, database.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, backups_core.BackupStatusCompleted, backup.Status)
+
+	newDBName := fmt.Sprintf("restored_ownership_%s_%s", pgVersion, suffix)
+	_, err = container.DB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s;", newDBName))
+	assert.NoError(t, err)
+
+	_, err = container.DB.Exec(fmt.Sprintf("CREATE DATABASE %s;", newDBName))
+	assert.NoError(t, err)
+
+	defer func() {
+		_, _ = container.DB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s;", newDBName))
+	}()
+
+	newDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		container.Host, container.Port, container.Username, container.Password, newDBName)
+	newDB, err := sqlx.Connect("postgres", newDSN)
+	assert.NoError(t, err)
+	defer newDB.Close()
+
+	createRestoreWithRestoreFlagsViaAPI(
+		t, router, backup.ID,
+		container.Host, container.Port,
+		container.Username, container.Password, newDBName,
+		true,  // isRestoreOwnership
+		false, // isRestorePrivileges
+		user.Token,
+	)
+
+	restore := waitForRestoreCompletion(t, router, backup.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, restores_core.RestoreStatusCompleted, restore.Status)
+
+	var restoredOwner string
+	err = newDB.Get(&restoredOwner, `
+		SELECT tableowner FROM pg_tables
+		WHERE schemaname = 'public' AND tablename = $1
+	`, tableName)
+	assert.NoError(t, err)
+	assert.Equal(
+		t,
+		ownerRole,
+		restoredOwner,
+		"Restored table should retain its original owner when isRestoreOwnership=true",
+	)
+
+	err = os.Remove(filepath.Join(config.GetEnv().DataFolder, backup.ID.String()))
+	if err != nil {
+		t.Logf("Warning: Failed to delete backup file: %v", err)
+	}
+
+	test_utils.MakeDeleteRequest(
+		t,
+		router,
+		"/api/v1/databases/"+database.ID.String(),
+		"Bearer "+user.Token,
+		http.StatusNoContent,
+	)
+	storages.RemoveTestStorage(storage.ID)
+	workspaces_testing.RemoveTestWorkspace(workspace, router)
+}
+
+func testBackupRestoreWithRestorePrivilegesForVersion(t *testing.T, pgVersion, port string) {
+	container, err := connectToPostgresContainer(pgVersion, port)
+	assert.NoError(t, err)
+	defer func() {
+		if container.DB != nil {
+			container.DB.Close()
+		}
+	}()
+
+	suffix := uuid.New().String()[:8]
+	granteeRole := fmt.Sprintf("test_grantee_%s", suffix)
+	tableName := fmt.Sprintf("test_privileges_data_%s", suffix)
+
+	_, err = container.DB.Exec(fmt.Sprintf(`
+		DROP TABLE IF EXISTS %s;
+		DROP ROLE IF EXISTS %s;
+		CREATE ROLE %s LOGIN PASSWORD 'placeholder';
+		CREATE TABLE %s (
+			id SERIAL PRIMARY KEY,
+			name TEXT NOT NULL,
+			value INTEGER NOT NULL
+		);
+		INSERT INTO %s (name, value) VALUES ('a', 1), ('b', 2), ('c', 3);
+		GRANT SELECT, INSERT ON %s TO %s;
+	`, tableName, granteeRole, granteeRole, tableName, tableName, tableName, granteeRole))
+	assert.NoError(t, err)
+
+	defer func() {
+		_, _ = container.DB.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s;", tableName))
+		_, _ = container.DB.Exec(fmt.Sprintf("DROP ROLE IF EXISTS %s;", granteeRole))
+	}()
+
+	router := createTestRouter()
+	user := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	workspace := workspaces_testing.CreateTestWorkspace("Privileges Test Workspace", user, router)
+
+	storage := storages.CreateTestStorage(workspace.ID)
+
+	database := createDatabaseViaAPI(
+		t, router, "Privileges Test Database", workspace.ID,
+		container.Host, container.Port,
+		container.Username, container.Password, container.Database,
+		user.Token,
+	)
+
+	enableBackupsViaAPI(
+		t, router, database.ID, storage.ID,
+		backups_config.BackupEncryptionNone, user.Token,
+	)
+
+	createBackupViaAPI(t, router, database.ID, user.Token)
+
+	backup := waitForBackupCompletion(t, router, database.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, backups_core.BackupStatusCompleted, backup.Status)
+
+	newDBName := fmt.Sprintf("restored_privileges_%s_%s", pgVersion, suffix)
+	_, err = container.DB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s;", newDBName))
+	assert.NoError(t, err)
+
+	_, err = container.DB.Exec(fmt.Sprintf("CREATE DATABASE %s;", newDBName))
+	assert.NoError(t, err)
+
+	defer func() {
+		_, _ = container.DB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s;", newDBName))
+	}()
+
+	newDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		container.Host, container.Port, container.Username, container.Password, newDBName)
+	newDB, err := sqlx.Connect("postgres", newDSN)
+	assert.NoError(t, err)
+	defer newDB.Close()
+
+	createRestoreWithRestoreFlagsViaAPI(
+		t, router, backup.ID,
+		container.Host, container.Port,
+		container.Username, container.Password, newDBName,
+		false, // isRestoreOwnership
+		true,  // isRestorePrivileges
+		user.Token,
+	)
+
+	restore := waitForRestoreCompletion(t, router, backup.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, restores_core.RestoreStatusCompleted, restore.Status)
+
+	var grantedPrivileges []string
+	err = newDB.Select(&grantedPrivileges, `
+		SELECT privilege_type FROM information_schema.role_table_grants
+		WHERE grantee = $1
+		  AND table_schema = 'public'
+		  AND table_name = $2
+		ORDER BY privilege_type
+	`, granteeRole, tableName)
+	assert.NoError(t, err)
+	assert.Contains(
+		t,
+		grantedPrivileges,
+		"SELECT",
+		"Restored table should retain SELECT grant when isRestorePrivileges=true",
+	)
+	assert.Contains(
+		t,
+		grantedPrivileges,
+		"INSERT",
+		"Restored table should retain INSERT grant when isRestorePrivileges=true",
+	)
+
+	err = os.Remove(filepath.Join(config.GetEnv().DataFolder, backup.ID.String()))
+	if err != nil {
+		t.Logf("Warning: Failed to delete backup file: %v", err)
+	}
+
+	test_utils.MakeDeleteRequest(
+		t,
+		router,
+		"/api/v1/databases/"+database.ID.String(),
+		"Bearer "+user.Token,
+		http.StatusNoContent,
+	)
+	storages.RemoveTestStorage(storage.ID)
+	workspaces_testing.RemoveTestWorkspace(workspace, router)
+}
+
 func testBackupRestoreWithReadOnlyUserForVersion(t *testing.T, pgVersion, port string) {
 	container, err := connectToPostgresContainer(pgVersion, port)
 	assert.NoError(t, err)
@@ -979,6 +1312,282 @@ func testSchemaSelectionOnlySpecifiedSchemasForVersion(
 	`)
 	assert.NoError(t, err)
 	assert.False(t, schemaBTableExists, "schema_b.table_b should NOT exist (was excluded)")
+
+	err = os.Remove(filepath.Join(config.GetEnv().DataFolder, backup.ID.String()))
+	if err != nil {
+		t.Logf("Warning: Failed to delete backup file: %v", err)
+	}
+
+	test_utils.MakeDeleteRequest(
+		t,
+		router,
+		"/api/v1/databases/"+database.ID.String(),
+		"Bearer "+user.Token,
+		http.StatusNoContent,
+	)
+	storages.RemoveTestStorage(storage.ID)
+	workspaces_testing.RemoveTestWorkspace(workspace, router)
+}
+
+func testBackupRestoreWithExcludeTablesForVersion(t *testing.T, pgVersion, port string) {
+	container, err := connectToPostgresContainer(pgVersion, port)
+	assert.NoError(t, err)
+	defer func() {
+		if container.DB != nil {
+			container.DB.Close()
+		}
+	}()
+
+	suffix := uuid.New().String()[:8]
+	keepTable := fmt.Sprintf("keep_me_%s", suffix)
+	dropTable := fmt.Sprintf("drop_me_%s", suffix)
+
+	_, err = container.DB.Exec(fmt.Sprintf(`
+		DROP TABLE IF EXISTS public.%s;
+		DROP TABLE IF EXISTS public.%s;
+		CREATE TABLE public.%s (id SERIAL PRIMARY KEY, data TEXT);
+		CREATE TABLE public.%s (id SERIAL PRIMARY KEY, data TEXT);
+		INSERT INTO public.%s (data) VALUES ('keep_value');
+		INSERT INTO public.%s (data) VALUES ('drop_value');
+	`, keepTable, dropTable, keepTable, dropTable, keepTable, dropTable))
+	assert.NoError(t, err)
+
+	defer func() {
+		_, _ = container.DB.Exec(
+			fmt.Sprintf("DROP TABLE IF EXISTS public.%s; DROP TABLE IF EXISTS public.%s;",
+				keepTable, dropTable),
+		)
+	}()
+
+	router := createTestRouter()
+	user := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	workspace := workspaces_testing.CreateTestWorkspace(
+		"Exclude Tables Test Workspace",
+		user,
+		router,
+	)
+
+	storage := storages.CreateTestStorage(workspace.ID)
+
+	database := createDatabaseViaAPI(
+		t, router, "Exclude Tables Test Database", workspace.ID,
+		container.Host, container.Port,
+		container.Username, container.Password, container.Database,
+		user.Token,
+	)
+
+	database.Postgresql.ExcludeTables = []string{dropTable}
+	updateDatabaseViaAPI(t, router, database, user.Token)
+
+	enableBackupsViaAPI(
+		t, router, database.ID, storage.ID,
+		backups_config.BackupEncryptionNone, user.Token,
+	)
+
+	createBackupViaAPI(t, router, database.ID, user.Token)
+
+	backup := waitForBackupCompletion(t, router, database.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, backups_core.BackupStatusCompleted, backup.Status)
+
+	newDBName := fmt.Sprintf("restored_excl_tables_%s_%s", pgVersion, suffix)
+	_, err = container.DB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s;", newDBName))
+	assert.NoError(t, err)
+
+	_, err = container.DB.Exec(fmt.Sprintf("CREATE DATABASE %s;", newDBName))
+	assert.NoError(t, err)
+
+	defer func() {
+		_, _ = container.DB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s;", newDBName))
+	}()
+
+	newDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		container.Host, container.Port, container.Username, container.Password, newDBName)
+	newDB, err := sqlx.Connect("postgres", newDSN)
+	assert.NoError(t, err)
+	defer newDB.Close()
+
+	createRestoreViaAPI(
+		t, router, backup.ID,
+		container.Host, container.Port,
+		container.Username, container.Password, newDBName,
+		user.Token,
+	)
+
+	restore := waitForRestoreCompletion(t, router, backup.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, restores_core.RestoreStatusCompleted, restore.Status)
+
+	var keepExists bool
+	err = newDB.Get(&keepExists, fmt.Sprintf(`
+		SELECT EXISTS (
+			SELECT FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = '%s'
+		)
+	`, keepTable))
+	assert.NoError(t, err)
+	assert.True(t, keepExists, "kept table should exist in restored database")
+
+	var dropExists bool
+	err = newDB.Get(&dropExists, fmt.Sprintf(`
+		SELECT EXISTS (
+			SELECT FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = '%s'
+		)
+	`, dropTable))
+	assert.NoError(t, err)
+	assert.False(t, dropExists, "excluded table should NOT exist in restored database")
+
+	err = os.Remove(filepath.Join(config.GetEnv().DataFolder, backup.ID.String()))
+	if err != nil {
+		t.Logf("Warning: Failed to delete backup file: %v", err)
+	}
+
+	test_utils.MakeDeleteRequest(
+		t,
+		router,
+		"/api/v1/databases/"+database.ID.String(),
+		"Bearer "+user.Token,
+		http.StatusNoContent,
+	)
+	storages.RemoveTestStorage(storage.ID)
+	workspaces_testing.RemoveTestWorkspace(workspace, router)
+}
+
+func testSchemasWithExcludeTablesForVersion(t *testing.T, pgVersion, port string) {
+	container, err := connectToPostgresContainer(pgVersion, port)
+	if err != nil {
+		t.Fatalf("Failed to connect to PostgreSQL container: %v", err)
+	}
+	defer container.DB.Close()
+
+	_, err = container.DB.Exec(`
+		DROP TABLE IF EXISTS public.public_table;
+		DROP SCHEMA IF EXISTS schema_a CASCADE;
+		DROP SCHEMA IF EXISTS schema_b CASCADE;
+		CREATE SCHEMA schema_a;
+		CREATE SCHEMA schema_b;
+
+		CREATE TABLE public.public_table (id SERIAL PRIMARY KEY, data TEXT);
+		CREATE TABLE schema_a.table_a (id SERIAL PRIMARY KEY, data TEXT);
+		CREATE TABLE schema_a.skip_me (id SERIAL PRIMARY KEY, data TEXT);
+		CREATE TABLE schema_b.table_b (id SERIAL PRIMARY KEY, data TEXT);
+
+		INSERT INTO public.public_table (data) VALUES ('public_data');
+		INSERT INTO schema_a.table_a (data) VALUES ('schema_a_data');
+		INSERT INTO schema_a.skip_me (data) VALUES ('skipped_data');
+		INSERT INTO schema_b.table_b (data) VALUES ('schema_b_data');
+	`)
+	assert.NoError(t, err)
+
+	defer func() {
+		_, _ = container.DB.Exec(`
+			DROP TABLE IF EXISTS public.public_table;
+			DROP SCHEMA IF EXISTS schema_a CASCADE;
+			DROP SCHEMA IF EXISTS schema_b CASCADE;
+		`)
+	}()
+
+	router := createTestRouter()
+	user := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	workspace := workspaces_testing.CreateTestWorkspace(
+		"Schemas+Exclude Tables Workspace",
+		user,
+		router,
+	)
+
+	storage := storages.CreateTestStorage(workspace.ID)
+
+	database := createDatabaseWithSchemasViaAPI(
+		t, router, "Schemas+Exclude Database", workspace.ID,
+		container.Host, container.Port,
+		container.Username, container.Password, container.Database,
+		[]string{"public", "schema_a"},
+		user.Token,
+	)
+
+	database.Postgresql.IncludeSchemas = []string{"public", "schema_a"}
+	database.Postgresql.ExcludeTables = []string{"schema_a.skip_me"}
+	updateDatabaseViaAPI(t, router, database, user.Token)
+
+	enableBackupsViaAPI(
+		t, router, database.ID, storage.ID,
+		backups_config.BackupEncryptionNone, user.Token,
+	)
+
+	createBackupViaAPI(t, router, database.ID, user.Token)
+
+	backup := waitForBackupCompletion(t, router, database.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, backups_core.BackupStatusCompleted, backup.Status)
+
+	newDBName := fmt.Sprintf("restored_schemas_excl_%s_%s", pgVersion, uuid.New().String()[:8])
+	_, err = container.DB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s;", newDBName))
+	assert.NoError(t, err)
+
+	_, err = container.DB.Exec(fmt.Sprintf("CREATE DATABASE %s;", newDBName))
+	assert.NoError(t, err)
+
+	defer func() {
+		_, _ = container.DB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s;", newDBName))
+	}()
+
+	newDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		container.Host, container.Port, container.Username, container.Password, newDBName)
+	newDB, err := sqlx.Connect("postgres", newDSN)
+	assert.NoError(t, err)
+	defer newDB.Close()
+
+	createRestoreViaAPI(
+		t, router, backup.ID,
+		container.Host, container.Port,
+		container.Username, container.Password, newDBName,
+		user.Token,
+	)
+
+	restore := waitForRestoreCompletion(t, router, backup.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, restores_core.RestoreStatusCompleted, restore.Status)
+
+	var publicTableExists bool
+	err = newDB.Get(&publicTableExists, `
+		SELECT EXISTS (
+			SELECT FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = 'public_table'
+		)
+	`)
+	assert.NoError(t, err)
+	assert.True(t, publicTableExists, "public.public_table should exist (schema included)")
+
+	var schemaATableExists bool
+	err = newDB.Get(&schemaATableExists, `
+		SELECT EXISTS (
+			SELECT FROM information_schema.tables
+			WHERE table_schema = 'schema_a' AND table_name = 'table_a'
+		)
+	`)
+	assert.NoError(t, err)
+	assert.True(t, schemaATableExists, "schema_a.table_a should exist (schema included, not excluded)")
+
+	var skipMeExists bool
+	err = newDB.Get(&skipMeExists, `
+		SELECT EXISTS (
+			SELECT FROM information_schema.tables
+			WHERE table_schema = 'schema_a' AND table_name = 'skip_me'
+		)
+	`)
+	assert.NoError(t, err)
+	assert.False(
+		t,
+		skipMeExists,
+		"schema_a.skip_me should NOT exist (excluded even though schema included)",
+	)
+
+	var schemaBTableExists bool
+	err = newDB.Get(&schemaBTableExists, `
+		SELECT EXISTS (
+			SELECT FROM information_schema.tables
+			WHERE table_schema = 'schema_b' AND table_name = 'table_b'
+		)
+	`)
+	assert.NoError(t, err)
+	assert.False(t, schemaBTableExists, "schema_b.table_b should NOT exist (schema not included)")
 
 	err = os.Remove(filepath.Join(config.GetEnv().DataFolder, backup.ID.String()))
 	if err != nil {
@@ -1403,6 +2012,42 @@ func createRestoreWithOptionsViaAPI(
 	)
 }
 
+func createRestoreWithRestoreFlagsViaAPI(
+	t *testing.T,
+	router *gin.Engine,
+	backupID uuid.UUID,
+	host string,
+	port int,
+	username string,
+	password string,
+	database string,
+	isRestoreOwnership bool,
+	isRestorePrivileges bool,
+	token string,
+) {
+	request := restores_core.RestoreBackupRequest{
+		PostgresqlDatabase: &pgtypes.PostgresqlDatabase{
+			Host:                host,
+			Port:                port,
+			Username:            username,
+			Password:            password,
+			Database:            &database,
+			IsRestoreOwnership:  isRestoreOwnership,
+			IsRestorePrivileges: isRestorePrivileges,
+			CpuCount:            1,
+		},
+	}
+
+	test_utils.MakePostRequest(
+		t,
+		router,
+		fmt.Sprintf("/api/v1/restores/%s/restore", backupID.String()),
+		"Bearer "+token,
+		request,
+		http.StatusOK,
+	)
+}
+
 func createDatabaseWithSchemasViaAPI(
 	t *testing.T,
 	router *gin.Engine,
@@ -1504,6 +2149,32 @@ func createReadOnlyUserViaAPI(
 	)
 
 	return &response
+}
+
+func updateDatabaseViaAPI(
+	t *testing.T,
+	router *gin.Engine,
+	database *databases.Database,
+	token string,
+) *databases.Database {
+	w := workspaces_testing.MakeAPIRequest(
+		router,
+		"POST",
+		"/api/v1/databases/update",
+		"Bearer "+token,
+		database,
+	)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Failed to update database. Status: %d, Body: %s", w.Code, w.Body.String())
+	}
+
+	var updatedDatabase databases.Database
+	if err := json.Unmarshal(w.Body.Bytes(), &updatedDatabase); err != nil {
+		t.Fatalf("Failed to unmarshal database response: %v", err)
+	}
+
+	return &updatedDatabase
 }
 
 func updateDatabaseCredentialsViaAPI(

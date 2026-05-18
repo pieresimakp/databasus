@@ -221,19 +221,11 @@ func (c *BackupCleaner) cleanByTimePeriod(logger *slog.Logger, backupConfig *bac
 		return nil
 	}
 
-	storeDuration := backupConfig.RetentionTimePeriod.ToDuration()
-	dateBeforeBackupsShouldBeDeleted := time.Now().UTC().Add(-storeDuration)
+	cutoff := time.Now().UTC().Add(-backupConfig.RetentionTimePeriod.ToDuration())
 
-	oldBackups, err := c.backupRepository.FindBackupsBeforeDate(
-		backupConfig.DatabaseID,
-		dateBeforeBackupsShouldBeDeleted,
-	)
+	oldBackups, err := c.backupRepository.FindBackupsBeforeDate(backupConfig.DatabaseID, cutoff)
 	if err != nil {
-		return fmt.Errorf(
-			"failed to find old backups for database %s: %w",
-			backupConfig.DatabaseID,
-			err,
-		)
+		return fmt.Errorf("failed to find old backups for database %s: %w", backupConfig.DatabaseID, err)
 	}
 
 	for _, backup := range oldBackups {
@@ -241,12 +233,7 @@ func (c *BackupCleaner) cleanByTimePeriod(logger *slog.Logger, backupConfig *bac
 			continue
 		}
 
-		if err := c.DeleteBackup(backup); err != nil {
-			logger.Error("failed to delete old backup", "backup_id", backup.ID, "error", err)
-			continue
-		}
-
-		logger.Info("deleted old backup", "backup_id", backup.ID)
+		c.deleteBackupAndCascadeWalSegments(logger, backup, "deleted old backup")
 	}
 
 	return nil
@@ -257,38 +244,22 @@ func (c *BackupCleaner) cleanByCount(logger *slog.Logger, backupConfig *backups_
 		return nil
 	}
 
-	completedBackups, err := c.backupRepository.FindByDatabaseIdAndStatus(
-		backupConfig.DatabaseID,
-		backups_core.BackupStatusCompleted,
-	)
+	fullBackups, err := c.findCompletedFullBackups(backupConfig.DatabaseID)
 	if err != nil {
-		return fmt.Errorf(
-			"failed to find completed backups for database %s: %w",
-			backupConfig.DatabaseID,
-			err,
-		)
+		return err
 	}
 
-	// completedBackups are ordered newest first; delete everything beyond position RetentionCount
-	if len(completedBackups) <= backupConfig.RetentionCount {
+	if len(fullBackups) <= backupConfig.RetentionCount {
 		return nil
 	}
 
-	toDelete := completedBackups[backupConfig.RetentionCount:]
-	for _, backup := range toDelete {
+	successMsg := fmt.Sprintf("deleted backup by count policy: retention count is %d", backupConfig.RetentionCount)
+	for _, backup := range fullBackups[backupConfig.RetentionCount:] {
 		if isRecentBackup(backup) {
 			continue
 		}
 
-		if err := c.DeleteBackup(backup); err != nil {
-			logger.Error("failed to delete backup by count policy", "backup_id", backup.ID, "error", err)
-			continue
-		}
-
-		logger.Info(
-			fmt.Sprintf("deleted backup by count policy: retention count is %d", backupConfig.RetentionCount),
-			"backup_id", backup.ID,
-		)
+		c.deleteBackupAndCascadeWalSegments(logger, backup, successMsg)
 	}
 
 	return nil
@@ -301,20 +272,13 @@ func (c *BackupCleaner) cleanByGFS(logger *slog.Logger, backupConfig *backups_co
 		return nil
 	}
 
-	completedBackups, err := c.backupRepository.FindByDatabaseIdAndStatus(
-		backupConfig.DatabaseID,
-		backups_core.BackupStatusCompleted,
-	)
+	fullBackups, err := c.findCompletedFullBackups(backupConfig.DatabaseID)
 	if err != nil {
-		return fmt.Errorf(
-			"failed to find completed backups for database %s: %w",
-			backupConfig.DatabaseID,
-			err,
-		)
+		return err
 	}
 
 	keepSet := buildGFSKeepSet(
-		completedBackups,
+		fullBackups,
 		backupConfig.RetentionGfsHours,
 		backupConfig.RetentionGfsDays,
 		backupConfig.RetentionGfsWeeks,
@@ -322,7 +286,7 @@ func (c *BackupCleaner) cleanByGFS(logger *slog.Logger, backupConfig *backups_co
 		backupConfig.RetentionGfsYears,
 	)
 
-	for _, backup := range completedBackups {
+	for _, backup := range fullBackups {
 		if keepSet[backup.ID] {
 			continue
 		}
@@ -331,12 +295,7 @@ func (c *BackupCleaner) cleanByGFS(logger *slog.Logger, backupConfig *backups_co
 			continue
 		}
 
-		if err := c.DeleteBackup(backup); err != nil {
-			logger.Error("failed to delete backup by GFS policy", "backup_id", backup.ID, "error", err)
-			continue
-		}
-
-		logger.Info("deleted backup by GFS policy", "backup_id", backup.ID)
+		c.deleteBackupAndCascadeWalSegments(logger, backup, "deleted backup by GFS policy")
 	}
 
 	return nil
@@ -348,49 +307,199 @@ func (c *BackupCleaner) cleanExceededBackupsForDatabase(
 	limitPerDbMB int64,
 ) error {
 	for {
-		backupsTotalSizeMB, err := c.backupRepository.GetTotalSizeByDatabase(databaseID)
+		totalSizeMB, err := c.backupRepository.GetTotalSizeByDatabase(databaseID)
 		if err != nil {
 			return err
 		}
 
-		if backupsTotalSizeMB <= float64(limitPerDbMB) {
+		if totalSizeMB <= float64(limitPerDbMB) {
 			break
 		}
 
-		oldestBackups, err := c.backupRepository.FindOldestByDatabaseExcludingInProgress(
-			databaseID,
-			1,
-		)
+		fullBackups, err := c.findCompletedFullBackups(databaseID)
 		if err != nil {
 			return err
 		}
 
-		if len(oldestBackups) == 0 {
+		oldestDeletable := c.findOldestDeletableFullBackup(fullBackups)
+		if oldestDeletable == nil {
 			logger.Warn(fmt.Sprintf(
-				"no backups to delete but still over limit: total size is %.1f MB, limit is %d MB",
-				backupsTotalSizeMB, limitPerDbMB,
+				"no backup to delete but still over limit: total size is %.1f MB, limit is %d MB",
+				totalSizeMB, limitPerDbMB,
 			))
 			break
 		}
 
-		backup := oldestBackups[0]
-		if isRecentBackup(backup) {
+		successMsg := fmt.Sprintf(
+			"deleted exceeded backup: backup size is %.1f MB, total size is %.1f MB, limit is %d MB",
+			oldestDeletable.BackupSizeMb, totalSizeMB, limitPerDbMB,
+		)
+		if !c.deleteBackupAndCascadeWalSegments(logger, oldestDeletable, successMsg) {
 			break
 		}
-
-		if err := c.DeleteBackup(backup); err != nil {
-			logger.Error("failed to delete exceeded backup", "backup_id", backup.ID, "error", err)
-			return err
-		}
-
-		logger.Info(
-			fmt.Sprintf("deleted exceeded backup: backup size is %.1f MB, total size is %.1f MB, limit is %d MB",
-				backup.BackupSizeMb, backupsTotalSizeMB, limitPerDbMB),
-			"backup_id", backup.ID,
-		)
 	}
 
 	return nil
+}
+
+// deleteBackupAndCascadeWalSegments refuses to delete the latest full WAL backup (would
+// break the agent's chain check, see issue #533), skips lone WAL segments (deleted only
+// alongside their parent), and otherwise deletes the backup plus any dependent WAL
+// segments. Returns true when a backup row was removed.
+func (c *BackupCleaner) deleteBackupAndCascadeWalSegments(
+	logger *slog.Logger,
+	backup *backups_core.Backup,
+	successMessage string,
+) bool {
+	if isWalSegmentBackup(backup) {
+		return false
+	}
+
+	if !isFullWalBackup(backup) {
+		if err := c.DeleteBackup(backup); err != nil {
+			logger.Error("failed to delete backup", "backup_id", backup.ID, "error", err)
+			return false
+		}
+
+		logger.Info(successMessage, "backup_id", backup.ID)
+
+		return true
+	}
+
+	if c.isLatestFullWalBackup(backup) {
+		return false
+	}
+
+	dependentSegments, err := c.findWalSegmentsForFullBackup(backup)
+	if err != nil {
+		logger.Error("failed to load WAL segments for cascade delete", "backup_id", backup.ID, "error", err)
+		return false
+	}
+
+	for i := len(dependentSegments) - 1; i >= 0; i-- {
+		seg := dependentSegments[i]
+		if err := c.DeleteBackup(seg); err != nil {
+			logger.Error("failed to delete WAL segment in cascade", "backup_id", seg.ID, "error", err)
+		}
+	}
+
+	if err := c.DeleteBackup(backup); err != nil {
+		logger.Error("failed to delete full backup in cascade", "backup_id", backup.ID, "error", err)
+		return false
+	}
+
+	logger.Info(successMessage, "backup_id", backup.ID, "wal_segments_deleted", len(dependentSegments))
+
+	return true
+}
+
+// findCompletedFullBackups returns completed full backups (WAL or non-WAL). WAL
+// segments are excluded — they ride with their parent full backup, not standalone.
+// Ordered newest-first to match the source repo query.
+func (c *BackupCleaner) findCompletedFullBackups(databaseID uuid.UUID) ([]*backups_core.Backup, error) {
+	completed, err := c.backupRepository.FindByDatabaseIdAndStatus(databaseID, backups_core.BackupStatusCompleted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find completed backups for database %s: %w", databaseID, err)
+	}
+
+	fullBackups := make([]*backups_core.Backup, 0, len(completed))
+	for _, b := range completed {
+		if !isWalSegmentBackup(b) {
+			fullBackups = append(fullBackups, b)
+		}
+	}
+
+	return fullBackups, nil
+}
+
+// findOldestDeletableFullBackup walks newest-first input from the oldest end and
+// returns the first backup that's both past the grace period and not the chain-anchoring
+// latest full WAL backup. Returns nil when nothing is deletable.
+func (c *BackupCleaner) findOldestDeletableFullBackup(
+	fullBackupsNewestFirst []*backups_core.Backup,
+) *backups_core.Backup {
+	for i := len(fullBackupsNewestFirst) - 1; i >= 0; i-- {
+		candidate := fullBackupsNewestFirst[i]
+
+		if isRecentBackup(candidate) {
+			continue
+		}
+
+		if c.isLatestFullWalBackup(candidate) {
+			continue
+		}
+
+		return candidate
+	}
+
+	return nil
+}
+
+// findWalSegmentsForFullBackup returns the WAL segments uploaded after fullBackup but
+// before the next completed full backup (or all later segments if fullBackup is the
+// most recent). These belong to fullBackup's restore chain and are deleted with it.
+func (c *BackupCleaner) findWalSegmentsForFullBackup(fullBackup *backups_core.Backup) ([]*backups_core.Backup, error) {
+	completedBackups, err := c.backupRepository.FindByDatabaseIdAndStatus(
+		fullBackup.DatabaseID,
+		backups_core.BackupStatusCompleted,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var nextFullCreatedAt *time.Time
+	for _, b := range completedBackups {
+		if !isFullWalBackup(b) || !b.CreatedAt.After(fullBackup.CreatedAt) {
+			continue
+		}
+
+		if nextFullCreatedAt == nil || b.CreatedAt.Before(*nextFullCreatedAt) {
+			t := b.CreatedAt
+			nextFullCreatedAt = &t
+		}
+	}
+
+	var dependentSegments []*backups_core.Backup
+	for _, candidate := range completedBackups {
+		if !isWalSegmentBackup(candidate) {
+			continue
+		}
+
+		if candidate.CreatedAt.Before(fullBackup.CreatedAt) {
+			continue
+		}
+
+		if nextFullCreatedAt != nil && !candidate.CreatedAt.Before(*nextFullCreatedAt) {
+			continue
+		}
+
+		dependentSegments = append(dependentSegments, candidate)
+	}
+
+	return dependentSegments, nil
+}
+
+func (c *BackupCleaner) isLatestFullWalBackup(backup *backups_core.Backup) bool {
+	if !isFullWalBackup(backup) {
+		return false
+	}
+
+	latest, err := c.backupRepository.FindLastCompletedFullWalBackupByDatabaseID(backup.DatabaseID)
+	if err != nil || latest == nil {
+		return false
+	}
+
+	return latest.ID == backup.ID
+}
+
+func isFullWalBackup(backup *backups_core.Backup) bool {
+	return backup.PgWalBackupType != nil &&
+		*backup.PgWalBackupType == backups_core.PgWalBackupTypeFullBackup
+}
+
+func isWalSegmentBackup(backup *backups_core.Backup) bool {
+	return backup.PgWalBackupType != nil &&
+		*backup.PgWalBackupType == backups_core.PgWalBackupTypeWalSegment
 }
 
 func isRecentBackup(backup *backups_core.Backup) bool {

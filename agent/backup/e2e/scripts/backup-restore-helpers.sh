@@ -334,6 +334,28 @@ verify_restored_data() {
   return 0
 }
 
+verify_wal_queue_no_backup_files() {
+  local wal_queue="$1"
+  local timeout="${2:-60}"
+
+  echo "Verifying WAL archive contains no .backup history files..."
+
+  for i in $(seq 1 "$timeout"); do
+    if ! find "$wal_queue" -maxdepth 1 -name "*.backup" -type f 2>/dev/null | grep -q .; then
+      echo "PASS: WAL archive contains no .backup history files"
+      return 0
+    fi
+
+    sleep 1
+  done
+
+  echo "FAIL: WAL archive still contains .backup history files after ${timeout}s:"
+  find "$wal_queue" -maxdepth 1 -name "*.backup" -type f -printf "  %f (%s bytes)\n" 2>/dev/null || true
+  echo "Agent output:"
+  cat /tmp/agent-output.log 2>/dev/null || true
+  return 1
+}
+
 find_pg_bin_dir() {
   # Find the PG bin dir from the installed version
   local pg_config_path

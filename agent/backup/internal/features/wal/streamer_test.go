@@ -332,6 +332,183 @@ func Test_UploadSegment_WhenUploadStalls_FailsWithIdleTimeout(t *testing.T) {
 	assert.NoError(t, statErr, "segment file should remain in queue after idle timeout")
 }
 
+func Test_UploadSegments_DirectoryHasBackupHistoryFile_BackupFileDeletedAndNotUploaded(t *testing.T) {
+	walDir := createTestWalDir(t)
+	segmentName := "000000010000000100000001"
+	backupName := "000000010000000000000003.00000028.backup"
+	writeTestSegment(t, walDir, segmentName, []byte("real segment"))
+	writeTestSegment(t, walDir, backupName, []byte("backup history"))
+
+	var mu sync.Mutex
+	var uploadedSegments []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		uploadedSegments = append(uploadedSegments, r.Header.Get("X-Wal-Segment-Name"))
+		mu.Unlock()
+
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	streamer := newTestStreamer(walDir, server.URL)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	go streamer.Run(ctx)
+	time.Sleep(500 * time.Millisecond)
+	cancel()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	require.Len(t, uploadedSegments, 1)
+	assert.Equal(t, segmentName, uploadedSegments[0])
+
+	_, err := os.Stat(filepath.Join(walDir, segmentName))
+	assert.True(t, os.IsNotExist(err), "uploaded segment should be deleted")
+
+	_, err = os.Stat(filepath.Join(walDir, backupName))
+	assert.True(t, os.IsNotExist(err), ".backup history file should be deleted from archive")
+}
+
+func Test_UploadSegments_DirectoryHasTimelineHistoryFile_HistoryFileDeletedAndNotUploaded(t *testing.T) {
+	walDir := createTestWalDir(t)
+	segmentName := "000000010000000100000001"
+	historyName := "000000000000000000000002.history"
+	writeTestSegment(t, walDir, segmentName, []byte("real segment"))
+	writeTestSegment(t, walDir, historyName, []byte("timeline history"))
+
+	var mu sync.Mutex
+	var uploadedSegments []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		uploadedSegments = append(uploadedSegments, r.Header.Get("X-Wal-Segment-Name"))
+		mu.Unlock()
+
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	streamer := newTestStreamer(walDir, server.URL)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	go streamer.Run(ctx)
+	time.Sleep(500 * time.Millisecond)
+	cancel()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	require.Len(t, uploadedSegments, 1)
+	assert.Equal(t, segmentName, uploadedSegments[0])
+
+	_, err := os.Stat(filepath.Join(walDir, historyName))
+	assert.True(t, os.IsNotExist(err), ".history file should be deleted from archive")
+}
+
+func Test_UploadSegments_BackupHistoryFileWithoutOffset_FileDeleted(t *testing.T) {
+	walDir := createTestWalDir(t)
+	backupName := "000000010000000000000003.backup"
+	writeTestSegment(t, walDir, backupName, []byte("backup history"))
+
+	uploadCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uploadCount++
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	streamer := newTestStreamer(walDir, server.URL)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	go streamer.Run(ctx)
+	time.Sleep(500 * time.Millisecond)
+	cancel()
+
+	assert.Equal(t, 0, uploadCount, "sidecar files should not trigger uploads")
+
+	_, err := os.Stat(filepath.Join(walDir, backupName))
+	assert.True(t, os.IsNotExist(err), ".backup file without offset suffix should be deleted")
+}
+
+func Test_UploadSegments_DeleteDisabled_SidecarsStillDeleted(t *testing.T) {
+	walDir := createTestWalDir(t)
+	segmentName := "000000010000000100000001"
+	backupName := "000000010000000000000003.00000028.backup"
+	historyName := "000000000000000000000002.history"
+	writeTestSegment(t, walDir, segmentName, []byte("real segment"))
+	writeTestSegment(t, walDir, backupName, []byte("backup history"))
+	writeTestSegment(t, walDir, historyName, []byte("timeline history"))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	isDeleteDisabled := false
+	cfg := createTestConfig(walDir, server.URL)
+	cfg.IsDeleteWalAfterUpload = &isDeleteDisabled
+	apiClient := api.NewClient(server.URL, cfg.Token, logger.GetLogger())
+	streamer := NewStreamer(cfg, apiClient, logger.GetLogger())
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	go streamer.Run(ctx)
+	time.Sleep(500 * time.Millisecond)
+	cancel()
+
+	_, err := os.Stat(filepath.Join(walDir, segmentName))
+	assert.NoError(t, err, "segment file should be kept when delete is disabled")
+
+	_, err = os.Stat(filepath.Join(walDir, backupName))
+	assert.True(t, os.IsNotExist(err), ".backup sidecar should be deleted regardless of IsDeleteWalAfterUpload")
+
+	_, err = os.Stat(filepath.Join(walDir, historyName))
+	assert.True(t, os.IsNotExist(err), ".history sidecar should be deleted regardless of IsDeleteWalAfterUpload")
+}
+
+func Test_UploadSegments_NonMatchingDotBackupFile_FileKept(t *testing.T) {
+	walDir := createTestWalDir(t)
+	unrelatedBackup := "notawal.backup"
+	unrelatedHistory := "random.history"
+	writeTestSegment(t, walDir, unrelatedBackup, []byte("user file"))
+	writeTestSegment(t, walDir, unrelatedHistory, []byte("user file"))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	streamer := newTestStreamer(walDir, server.URL)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	go streamer.Run(ctx)
+	time.Sleep(500 * time.Millisecond)
+	cancel()
+
+	_, err := os.Stat(filepath.Join(walDir, unrelatedBackup))
+	assert.NoError(t, err, "files not matching the Postgres sidecar pattern must be left alone")
+
+	_, err = os.Stat(filepath.Join(walDir, unrelatedHistory))
+	assert.NoError(t, err, "files not matching the Postgres sidecar pattern must be left alone")
+}
+
 func newTestStreamer(walDir, serverURL string) *Streamer {
 	cfg := createTestConfig(walDir, serverURL)
 	apiClient := api.NewClient(serverURL, cfg.Token, logger.GetLogger())

@@ -2,6 +2,7 @@ package wal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,7 +26,11 @@ const (
 	uploadTimeout = 5 * time.Minute
 )
 
-var segmentNameRegex = regexp.MustCompile(`^[0-9A-Fa-f]{24}$`)
+var (
+	segmentNameRegex     = regexp.MustCompile(`^[0-9A-Fa-f]{24}$`)
+	backupHistoryRegex   = regexp.MustCompile(`^[0-9A-Fa-f]{24}(\.[0-9A-Fa-f]+)?\.backup$`)
+	timelineHistoryRegex = regexp.MustCompile(`^[0-9A-Fa-f]{24}\.history$`)
+)
 
 type Streamer struct {
 	cfg       *config.Config
@@ -108,11 +113,12 @@ func (s *Streamer) listSegments() ([]string, error) {
 			continue
 		}
 
-		if !segmentNameRegex.MatchString(name) {
-			continue
+		switch {
+		case segmentNameRegex.MatchString(name):
+			segments = append(segments, name)
+		case backupHistoryRegex.MatchString(name), timelineHistoryRegex.MatchString(name):
+			s.removeSidecar(name)
 		}
-
-		segments = append(segments, name)
 	}
 
 	slices.Sort(segments)
@@ -170,6 +176,26 @@ func (s *Streamer) uploadSegment(ctx context.Context, segmentName string) error 
 	}
 
 	return nil
+}
+
+// removeSidecar deletes Postgres backup-history (.backup) and timeline-history
+// (.history) files left in the WAL archive by archive_command. Safe to delete:
+// the agent uploads each pg_basebackup tarball directly to the backend with
+// start/stop LSNs, and timeline-history files are already inside that tarball,
+// so the on-disk copies are inert in this architecture.
+func (s *Streamer) removeSidecar(name string) {
+	path := filepath.Join(s.cfg.PgWalDir, name)
+
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return
+		}
+
+		s.log.Warn("failed to delete WAL sidecar file", "file", name, "error", err)
+		return
+	}
+
+	s.log.Info("deleted WAL sidecar file", "file", name)
 }
 
 func (s *Streamer) compressAndStream(pw *io.PipeWriter, filePath string) {

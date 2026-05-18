@@ -167,6 +167,160 @@ func Test_CreateSystemStorage_OnlyAdminCanCreate_MemberGetsForbidden(t *testing.
 	workspaces_testing.RemoveTestWorkspace(workspace, router)
 }
 
+func Test_CreateRcloneStorage_OnlyAdminCanCreate_MemberGetsForbidden(t *testing.T) {
+	admin := users_testing.CreateTestUser(users_enums.UserRoleAdmin)
+	member := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	router := createRouter()
+	adminWorkspace := workspaces_testing.CreateTestWorkspace("Admin Workspace", admin, router)
+	memberWorkspace := workspaces_testing.CreateTestWorkspace("Member Workspace", member, router)
+
+	adminStorage := createNewRcloneStorage(adminWorkspace.ID)
+	var savedStorage Storage
+	test_utils.MakePostRequestAndUnmarshal(
+		t,
+		router,
+		"/api/v1/storages",
+		"Bearer "+admin.Token,
+		*adminStorage,
+		http.StatusOK,
+		&savedStorage,
+	)
+
+	assert.NotEmpty(t, savedStorage.ID)
+	assert.Equal(t, StorageTypeRclone, savedStorage.Type)
+
+	memberStorage := createNewRcloneStorage(memberWorkspace.ID)
+	resp := test_utils.MakePostRequest(
+		t,
+		router,
+		"/api/v1/storages",
+		"Bearer "+member.Token,
+		*memberStorage,
+		http.StatusForbidden,
+	)
+	assert.Contains(t, string(resp.Body), "rclone storage can only be managed by administrators")
+
+	deleteStorage(t, router, savedStorage.ID, admin.Token)
+	workspaces_testing.RemoveTestWorkspace(adminWorkspace, router)
+	workspaces_testing.RemoveTestWorkspace(memberWorkspace, router)
+}
+
+func Test_UpdateStorageTypeToRclone_OnlyAdminCanUpdate_MemberGetsForbidden(t *testing.T) {
+	admin := users_testing.CreateTestUser(users_enums.UserRoleAdmin)
+	member := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	router := createRouter()
+	adminWorkspace := workspaces_testing.CreateTestWorkspace("Admin Workspace", admin, router)
+	memberWorkspace := workspaces_testing.CreateTestWorkspace("Member Workspace", member, router)
+
+	adminS3Storage := &Storage{
+		WorkspaceID: adminWorkspace.ID,
+		Type:        StorageTypeS3,
+		Name:        "Admin S3 Storage " + uuid.New().String(),
+		S3Storage: &s3_storage.S3Storage{
+			S3Bucket:    "test-bucket",
+			S3Region:    "us-east-1",
+			S3AccessKey: "access-key",
+			S3SecretKey: "secret-key",
+		},
+	}
+	var adminSaved Storage
+	test_utils.MakePostRequestAndUnmarshal(
+		t,
+		router,
+		"/api/v1/storages",
+		"Bearer "+admin.Token,
+		*adminS3Storage,
+		http.StatusOK,
+		&adminSaved,
+	)
+
+	adminSwitchToRclone := &Storage{
+		ID:          adminSaved.ID,
+		WorkspaceID: adminWorkspace.ID,
+		Type:        StorageTypeRclone,
+		Name:        adminSaved.Name,
+		RcloneStorage: &rclone_storage.RcloneStorage{
+			ConfigContent: "[remote]\ntype = s3\nprovider = AWS\naccess_key_id = x\nsecret_access_key = y\n",
+		},
+	}
+	var adminUpdated Storage
+	test_utils.MakePostRequestAndUnmarshal(
+		t,
+		router,
+		"/api/v1/storages",
+		"Bearer "+admin.Token,
+		*adminSwitchToRclone,
+		http.StatusOK,
+		&adminUpdated,
+	)
+	assert.Equal(t, StorageTypeRclone, adminUpdated.Type)
+
+	memberS3Storage := &Storage{
+		WorkspaceID: memberWorkspace.ID,
+		Type:        StorageTypeS3,
+		Name:        "Member S3 Storage " + uuid.New().String(),
+		S3Storage: &s3_storage.S3Storage{
+			S3Bucket:    "test-bucket",
+			S3Region:    "us-east-1",
+			S3AccessKey: "access-key",
+			S3SecretKey: "secret-key",
+		},
+	}
+	var memberSaved Storage
+	test_utils.MakePostRequestAndUnmarshal(
+		t,
+		router,
+		"/api/v1/storages",
+		"Bearer "+member.Token,
+		*memberS3Storage,
+		http.StatusOK,
+		&memberSaved,
+	)
+
+	memberSwitchToRclone := &Storage{
+		ID:          memberSaved.ID,
+		WorkspaceID: memberWorkspace.ID,
+		Type:        StorageTypeRclone,
+		Name:        memberSaved.Name,
+		RcloneStorage: &rclone_storage.RcloneStorage{
+			ConfigContent: "[remote]\ntype = s3\nprovider = AWS\naccess_key_id = x\nsecret_access_key = y\n",
+		},
+	}
+	resp := test_utils.MakePostRequest(
+		t,
+		router,
+		"/api/v1/storages",
+		"Bearer "+member.Token,
+		*memberSwitchToRclone,
+		http.StatusForbidden,
+	)
+	assert.Contains(t, string(resp.Body), "rclone storage can only be managed by administrators")
+
+	deleteStorage(t, router, adminSaved.ID, admin.Token)
+	deleteStorage(t, router, memberSaved.ID, member.Token)
+	workspaces_testing.RemoveTestWorkspace(adminWorkspace, router)
+	workspaces_testing.RemoveTestWorkspace(memberWorkspace, router)
+}
+
+func Test_TestStorageConnectionDirect_RcloneAsMember_ReturnsForbidden(t *testing.T) {
+	member := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	router := createRouter()
+	workspace := workspaces_testing.CreateTestWorkspace("Member Workspace", member, router)
+
+	payload := createNewRcloneStorage(workspace.ID)
+	resp := test_utils.MakePostRequest(
+		t,
+		router,
+		"/api/v1/storages/direct-test",
+		"Bearer "+member.Token,
+		*payload,
+		http.StatusForbidden,
+	)
+	assert.Contains(t, string(resp.Body), "rclone storage can only be managed by administrators")
+
+	workspaces_testing.RemoveTestWorkspace(workspace, router)
+}
+
 func Test_UpdateStorageIsSystem_OnlyAdminCanUpdate_MemberGetsForbidden(t *testing.T) {
 	admin := users_testing.CreateTestUser(users_enums.UserRoleAdmin)
 	member := users_testing.CreateTestUser(users_enums.UserRoleMember)
@@ -1169,11 +1323,11 @@ func Test_StorageSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					"S3SecretKey should be encrypted with 'enc:' prefix")
 
 				encryptor := encryption.GetFieldEncryptor()
-				accessKey, err := encryptor.Decrypt(storage.ID, storage.S3Storage.S3AccessKey)
+				accessKey, err := encryptor.Decrypt(storage.S3Storage.S3AccessKey)
 				assert.NoError(t, err)
 				assert.Equal(t, "original-access-key", accessKey)
 
-				secretKey, err := encryptor.Decrypt(storage.ID, storage.S3Storage.S3SecretKey)
+				secretKey, err := encryptor.Decrypt(storage.S3Storage.S3SecretKey)
 				assert.NoError(t, err)
 				assert.Equal(t, "original-secret-key", secretKey)
 			},
@@ -1250,7 +1404,7 @@ func Test_StorageSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					"Password should be encrypted with 'enc:' prefix")
 
 				encryptor := encryption.GetFieldEncryptor()
-				password, err := encryptor.Decrypt(storage.ID, storage.NASStorage.Password)
+				password, err := encryptor.Decrypt(storage.NASStorage.Password)
 				assert.NoError(t, err)
 				assert.Equal(t, "original-password", password)
 			},
@@ -1295,10 +1449,7 @@ func Test_StorageSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					"ConnectionString should be encrypted with 'enc:' prefix")
 
 				encryptor := encryption.GetFieldEncryptor()
-				connectionString, err := encryptor.Decrypt(
-					storage.ID,
-					storage.AzureBlobStorage.ConnectionString,
-				)
+				connectionString, err := encryptor.Decrypt(storage.AzureBlobStorage.ConnectionString)
 				assert.NoError(t, err)
 				assert.Equal(t, "original-connection-string", connectionString)
 			},
@@ -1346,10 +1497,7 @@ func Test_StorageSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					"AccountKey should be encrypted with 'enc:' prefix")
 
 				encryptor := encryption.GetFieldEncryptor()
-				accountKey, err := encryptor.Decrypt(
-					storage.ID,
-					storage.AzureBlobStorage.AccountKey,
-				)
+				accountKey, err := encryptor.Decrypt(storage.AzureBlobStorage.AccountKey)
 				assert.NoError(t, err)
 				assert.Equal(t, "original-account-key", accountKey)
 			},
@@ -1397,7 +1545,7 @@ func Test_StorageSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					"Password should be encrypted with 'enc:' prefix")
 
 				encryptor := encryption.GetFieldEncryptor()
-				password, err := encryptor.Decrypt(storage.ID, storage.FTPStorage.Password)
+				password, err := encryptor.Decrypt(storage.FTPStorage.Password)
 				assert.NoError(t, err)
 				assert.Equal(t, "original-password", password)
 			},
@@ -1448,11 +1596,11 @@ func Test_StorageSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					"PrivateKey should be encrypted with 'enc:' prefix")
 
 				encryptor := encryption.GetFieldEncryptor()
-				password, err := encryptor.Decrypt(storage.ID, storage.SFTPStorage.Password)
+				password, err := encryptor.Decrypt(storage.SFTPStorage.Password)
 				assert.NoError(t, err)
 				assert.Equal(t, "original-password", password)
 
-				privateKey, err := encryptor.Decrypt(storage.ID, storage.SFTPStorage.PrivateKey)
+				privateKey, err := encryptor.Decrypt(storage.SFTPStorage.PrivateKey)
 				assert.NoError(t, err)
 				assert.Equal(t, "original-private-key", privateKey)
 			},
@@ -1492,10 +1640,7 @@ func Test_StorageSensitiveDataLifecycle_AllTypes(t *testing.T) {
 					"ConfigContent should be encrypted with 'enc:' prefix")
 
 				encryptor := encryption.GetFieldEncryptor()
-				configContent, err := encryptor.Decrypt(
-					storage.ID,
-					storage.RcloneStorage.ConfigContent,
-				)
+				configContent, err := encryptor.Decrypt(storage.RcloneStorage.ConfigContent)
 				assert.NoError(t, err)
 				assert.Equal(
 					t,
@@ -1511,7 +1656,11 @@ func Test_StorageSensitiveDataLifecycle_AllTypes(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			owner := users_testing.CreateTestUser(users_enums.UserRoleMember)
+			ownerRole := users_enums.UserRoleMember
+			if tc.storageType == StorageTypeRclone {
+				ownerRole = users_enums.UserRoleAdmin
+			}
+			owner := users_testing.CreateTestUser(ownerRole)
 			router := createRouter()
 			workspace := workspaces_testing.CreateTestWorkspace("Test Workspace", owner, router)
 
@@ -2067,6 +2216,17 @@ func createNewStorage(workspaceID uuid.UUID) *Storage {
 		Type:         StorageTypeLocal,
 		Name:         "Test Storage " + uuid.New().String(),
 		LocalStorage: &local_storage.LocalStorage{},
+	}
+}
+
+func createNewRcloneStorage(workspaceID uuid.UUID) *Storage {
+	return &Storage{
+		WorkspaceID: workspaceID,
+		Type:        StorageTypeRclone,
+		Name:        "Test Rclone Storage " + uuid.New().String(),
+		RcloneStorage: &rclone_storage.RcloneStorage{
+			ConfigContent: "[remote]\ntype = s3\nprovider = AWS\naccess_key_id = x\nsecret_access_key = y\n",
+		},
 	}
 }
 

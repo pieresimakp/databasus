@@ -1,6 +1,7 @@
 package backuping
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -75,6 +76,7 @@ var backupsScheduler = &BackupsScheduler{
 	time.Now().UTC(),
 	logger.GetLogger(),
 	make(map[uuid.UUID]BackupToNodeRelation),
+	sync.Mutex{},
 	backuperNode,
 	atomic.Bool{},
 }

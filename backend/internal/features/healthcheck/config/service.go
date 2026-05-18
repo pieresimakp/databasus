@@ -51,6 +51,10 @@ func (s *HealthcheckConfigService) Save(
 		return errors.New("insufficient permissions to modify healthcheck config")
 	}
 
+	if database.IsAgentManagedBackup() && configDTO.IsHealthcheckEnabled {
+		return errors.New("healthcheck cannot be enabled for agent-managed databases")
+	}
+
 	healthcheckConfig := configDTO.ToDTO()
 	s.logger.Info("healthcheck config", "config", healthcheckConfig)
 

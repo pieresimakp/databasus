@@ -50,6 +50,53 @@ type MongodbTestDataItem struct {
 	CreatedAt time.Time `bson:"created_at"`
 }
 
+func Test_CreateMongodbDatabase_WhenVersionIsBelow42_ReturnsBadRequest(t *testing.T) {
+	env := config.GetEnv()
+	port := env.TestMongodb40Port
+	if port == "" {
+		t.Skip("MongoDB 4.0 port not configured")
+	}
+	portInt, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatalf("invalid TEST_MONGODB_40_PORT: %v", err)
+	}
+
+	router := createTestRouter()
+	user := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	workspace := workspaces_testing.CreateTestWorkspace(
+		"MongoDB 4.0 reject test", user, router,
+	)
+	defer workspaces_testing.RemoveTestWorkspace(workspace, router)
+
+	request := databases.Database{
+		Name:        "MongoDB 4.0 rejected",
+		WorkspaceID: &workspace.ID,
+		Type:        databases.DatabaseTypeMongodb,
+		Mongodb: &mongodbtypes.MongodbDatabase{
+			Host:         env.TestLocalhost,
+			Port:         &portInt,
+			Username:     "root",
+			Password:     "rootpassword",
+			Database:     "testdb",
+			AuthDatabase: "admin",
+			Version:      tools.MongodbVersion4,
+			IsHttps:      false,
+			IsSrv:        false,
+			CpuCount:     1,
+		},
+	}
+
+	w := workspaces_testing.MakeAPIRequest(
+		router, "POST", "/api/v1/databases/create",
+		"Bearer "+user.Token, request,
+	)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code,
+		"creating a MongoDB 4.0 database should be rejected; got body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "4.2",
+		"error should reference the 4.2 minimum supported version")
+}
+
 func Test_BackupAndRestoreMongodb_RestoreIsSuccessful(t *testing.T) {
 	env := config.GetEnv()
 	cases := []struct {
@@ -92,6 +139,31 @@ func Test_BackupAndRestoreMongodbWithEncryption_RestoreIsSuccessful(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			testMongodbBackupRestoreWithEncryptionForVersion(t, tc.version, tc.port)
+		})
+	}
+}
+
+func Test_BackupAndRestoreMongodb_WithExcludeCollections_ExcludedCollectionsNotRestored(
+	t *testing.T,
+) {
+	env := config.GetEnv()
+	cases := []struct {
+		name    string
+		version tools.MongodbVersion
+		port    string
+	}{
+		{"MongoDB 4.2", tools.MongodbVersion4, env.TestMongodb42Port},
+		{"MongoDB 4.4", tools.MongodbVersion4, env.TestMongodb44Port},
+		{"MongoDB 5.0", tools.MongodbVersion5, env.TestMongodb50Port},
+		{"MongoDB 6.0", tools.MongodbVersion6, env.TestMongodb60Port},
+		{"MongoDB 7.0", tools.MongodbVersion7, env.TestMongodb70Port},
+		{"MongoDB 8.2", tools.MongodbVersion8, env.TestMongodb82Port},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testMongodbBackupRestoreWithExcludeCollectionsForVersion(t, tc.version, tc.port)
 		})
 	}
 }
@@ -355,6 +427,122 @@ func testMongodbBackupRestoreWithReadOnlyUserForVersion(
 		t,
 		router,
 		"/api/v1/databases/"+updatedDatabase.ID.String(),
+		"Bearer "+user.Token,
+		http.StatusNoContent,
+	)
+	storages.RemoveTestStorage(storage.ID)
+	workspaces_testing.RemoveTestWorkspace(workspace, router)
+}
+
+func testMongodbBackupRestoreWithExcludeCollectionsForVersion(
+	t *testing.T,
+	mongodbVersion tools.MongodbVersion,
+	port string,
+) {
+	container, err := connectToMongodbContainer(mongodbVersion, port)
+	if err != nil {
+		t.Skipf("Skipping MongoDB %s test: %v", mongodbVersion, err)
+		return
+	}
+	defer container.Client.Disconnect(t.Context())
+
+	setupMongodbTestData(t, container)
+
+	ctx := t.Context()
+	skipCollection := container.Client.Database(container.Database).Collection("skip_me")
+	_ = skipCollection.Drop(ctx)
+	_, err = skipCollection.InsertMany(ctx, []any{
+		MongodbTestDataItem{ID: "1", Name: "skip1", Value: 1, CreatedAt: time.Now().UTC()},
+		MongodbTestDataItem{ID: "2", Name: "skip2", Value: 2, CreatedAt: time.Now().UTC()},
+	})
+	assert.NoError(t, err)
+
+	defer func() {
+		_ = container.Client.Database(container.Database).Collection("skip_me").Drop(ctx)
+	}()
+
+	router := createTestRouter()
+	user := users_testing.CreateTestUser(users_enums.UserRoleMember)
+	workspace := workspaces_testing.CreateTestWorkspace(
+		"MongoDB Exclude Collections Test Workspace",
+		user,
+		router,
+	)
+
+	storage := storages.CreateTestStorage(workspace.ID)
+
+	database := createMongodbDatabaseViaAPI(
+		t, router, "MongoDB Exclude Collections Test Database", workspace.ID,
+		container.Host, container.Port,
+		container.Username, container.Password,
+		container.Database, container.AuthDatabase,
+		container.Version,
+		user.Token,
+	)
+
+	database.Mongodb.ExcludeCollections = []string{"skip_me"}
+	w := workspaces_testing.MakeAPIRequest(
+		router,
+		"POST",
+		"/api/v1/databases/update",
+		"Bearer "+user.Token,
+		database,
+	)
+	if w.Code != http.StatusOK {
+		t.Fatalf(
+			"Failed to update database with ExcludeCollections. Status: %d, Body: %s",
+			w.Code,
+			w.Body.String(),
+		)
+	}
+
+	enableBackupsViaAPI(
+		t, router, database.ID, storage.ID,
+		backups_config.BackupEncryptionNone, user.Token,
+	)
+
+	createBackupViaAPI(t, router, database.ID, user.Token)
+
+	backup := waitForBackupCompletion(t, router, database.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, backups_core.BackupStatusCompleted, backup.Status)
+
+	newDBName := "restoreddb_mongodb_excl_" + uuid.New().String()[:8]
+
+	createMongodbRestoreViaAPI(
+		t, router, backup.ID,
+		container.Host, container.Port,
+		container.Username, container.Password,
+		newDBName, container.AuthDatabase,
+		container.Version,
+		user.Token,
+	)
+
+	restore := waitForMongodbRestoreCompletion(t, router, backup.ID, user.Token, 5*time.Minute)
+	assert.Equal(t, restores_core.RestoreStatusCompleted, restore.Status)
+
+	keptCount, err := container.Client.Database(newDBName).
+		Collection("test_data").
+		CountDocuments(ctx, bson.M{})
+	assert.NoError(t, err)
+	assert.Equal(t, int64(3), keptCount, "test_data collection should be restored with 3 documents")
+
+	skippedCount, err := container.Client.Database(newDBName).
+		Collection("skip_me").
+		CountDocuments(ctx, bson.M{})
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), skippedCount, "skip_me collection should NOT be restored (excluded)")
+
+	_ = container.Client.Database(newDBName).Drop(ctx)
+
+	err = os.Remove(filepath.Join(config.GetEnv().DataFolder, backup.ID.String()))
+	if err != nil {
+		t.Logf("Warning: Failed to delete backup file: %v", err)
+	}
+
+	test_utils.MakeDeleteRequest(
+		t,
+		router,
+		"/api/v1/databases/"+database.ID.String(),
 		"Bearer "+user.Token,
 		http.StatusNoContent,
 	)

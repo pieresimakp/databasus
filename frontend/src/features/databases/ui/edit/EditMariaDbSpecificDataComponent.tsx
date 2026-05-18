@@ -1,5 +1,5 @@
 import { CopyOutlined, DownOutlined, InfoCircleOutlined, UpOutlined } from '@ant-design/icons';
-import { App, Button, Checkbox, Input, InputNumber, Switch, Tooltip } from 'antd';
+import { App, Button, Checkbox, Input, InputNumber, Select, Switch, Tooltip } from 'antd';
 import { useEffect, useState } from 'react';
 
 import { IS_CLOUD } from '../../../../constants';
@@ -48,7 +48,8 @@ export const EditMariaDbSpecificDataComponent = ({
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isConnectionFailed, setIsConnectionFailed] = useState(false);
 
-  const hasAdvancedValues = !!database.mariadb?.isExcludeEvents;
+  const hasAdvancedValues =
+    !!database.mariadb?.isExcludeEvents || !!database.mariadb?.excludeTables?.length;
   const [isShowAdvanced, setShowAdvanced] = useState(hasAdvancedValues);
 
   const [isShowPasteModal, setIsShowPasteModal] = useState(false);
@@ -347,34 +348,60 @@ export const EditMariaDbSpecificDataComponent = ({
       </div>
 
       {isShowAdvanced && (
-        <div className="mb-1 flex w-full items-center">
-          <div className="min-w-[150px]">Exclude events</div>
-          <div className="flex items-center">
-            <Checkbox
-              checked={editingDatabase.mariadb?.isExcludeEvents || false}
-              onChange={(e) => {
+        <>
+          <div className="mb-1 flex w-full items-center">
+            <div className="min-w-[150px]">Exclude events</div>
+            <div className="flex items-center">
+              <Checkbox
+                checked={editingDatabase.mariadb?.isExcludeEvents || false}
+                onChange={(e) => {
+                  if (!editingDatabase.mariadb) return;
+
+                  setEditingDatabase({
+                    ...editingDatabase,
+                    mariadb: {
+                      ...editingDatabase.mariadb,
+                      isExcludeEvents: e.target.checked,
+                    },
+                  });
+                }}
+              >
+                Skip events
+              </Checkbox>
+
+              <Tooltip
+                className="cursor-pointer"
+                title="Skip backing up database events. Enable this if the event scheduler is disabled on your MariaDB server."
+              >
+                <InfoCircleOutlined className="ml-2" style={{ color: 'gray' }} />
+              </Tooltip>
+            </div>
+          </div>
+
+          <div className="mb-1 flex w-full items-center">
+            <div className="min-w-[150px]">Exclude tables</div>
+            <Select
+              mode="tags"
+              value={editingDatabase.mariadb?.excludeTables || []}
+              onChange={(values) => {
                 if (!editingDatabase.mariadb) return;
 
                 setEditingDatabase({
                   ...editingDatabase,
-                  mariadb: {
-                    ...editingDatabase.mariadb,
-                    isExcludeEvents: e.target.checked,
-                  },
+                  mariadb: { ...editingDatabase.mariadb, excludeTables: values },
                 });
               }}
-            >
-              Skip events
-            </Checkbox>
+              size="small"
+              className="max-w-[200px] grow"
+              placeholder="No tables excluded"
+              tokenSeparators={[',']}
+            />
 
-            <Tooltip
-              className="cursor-pointer"
-              title="Skip backing up database events. Enable this if the event scheduler is disabled on your MariaDB server."
-            >
+            <Tooltip className="cursor-pointer" title="Table names to exclude from the backup.">
               <InfoCircleOutlined className="ml-2" style={{ color: 'gray' }} />
             </Tooltip>
           </div>
-        </div>
+        </>
       )}
 
       <div className="mt-5 flex">
