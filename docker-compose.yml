@@ -791,7 +791,7 @@ services:
   # Databasus HTTPS image tests
   # ================================================================
 
-  databasus-https-self-signed:
+  test-databasus-https:
     build:
       context: .
       dockerfile: Dockerfile
