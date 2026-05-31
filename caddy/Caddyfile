@@ -1,0 +1,8 @@
+{
+	auto_https disable_redirects
+}
+
+localhost:4006 {
+	tls internal
+	reverse_proxy 127.0.0.1:4005
+}
