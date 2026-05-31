@@ -148,7 +148,7 @@ ENV ENV_MODE=production
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      wget ca-certificates gnupg lsb-release sudo gosu curl unzip xz-utils \
+      wget ca-certificates gnupg lsb-release sudo gosu curl unzip xz-utils openssl \
       libncurses5 libncurses6 rclone \
       libmariadb3 \
       libgnutls30; \

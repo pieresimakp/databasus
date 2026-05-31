@@ -211,9 +211,10 @@ docker run -d \
   databasus/databasus:latest
 ```
 
-Access the TLS endpoint at `https://localhost:4006`. Because Caddy uses its
-internal CA, browsers and API clients will report the certificate as untrusted
-until you trust the generated root certificate.
+Access the TLS endpoint at `https://localhost:4006`, or use the server IP such
+as `https://10.10.64.115:4006`. The generated certificate is self-signed, so
+browsers and API clients will report it as untrusted. The certificate is stored
+under `/databasus-data/caddy` and reused across restarts.
 
 To use your own certificate, mount the PEM certificate and private key into the
 container and set both paths:

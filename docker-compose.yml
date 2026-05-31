@@ -800,7 +800,7 @@ services:
     tmpfs:
       - /databasus-data
     healthcheck:
-      test: ["CMD", "curl", "-kfsS", "https://localhost:4006/api/v1/system/health"]
+      test: ["CMD", "curl", "-kfsS", "https://127.0.0.1:4006/api/v1/system/health"]
       interval: 2s
       timeout: 5s
       retries: 30

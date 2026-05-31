@@ -2,7 +2,7 @@
 	auto_https disable_redirects
 }
 
-localhost:4006 {
-	tls internal
+:4006 {
+	tls /databasus-data/caddy/self-signed.crt /databasus-data/caddy/self-signed.key
 	reverse_proxy 127.0.0.1:4005
 }

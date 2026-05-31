@@ -28,7 +28,22 @@ if [ -n "${DATABASUS_TLS_CERT_PATH:-}" ] || [ -n "${DATABASUS_TLS_KEY_PATH:-}" ]
     echo "Using custom TLS certificate."
     CADDYFILE=/app/Caddyfile.custom-cert
 else
-    echo "Using Caddy internal CA certificate."
+    if [ ! -s /databasus-data/caddy/self-signed.crt ] || [ ! -s /databasus-data/caddy/self-signed.key ]; then
+        echo "Generating self-signed TLS certificate..."
+        gosu databasus openssl req \
+          -x509 \
+          -newkey rsa:2048 \
+          -nodes \
+          -sha256 \
+          -days 3650 \
+          -subj "/CN=localhost" \
+          -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+          -keyout /databasus-data/caddy/self-signed.key \
+          -out /databasus-data/caddy/self-signed.crt
+        chmod 600 /databasus-data/caddy/self-signed.key
+    fi
+
+    echo "Using generated self-signed TLS certificate."
     CADDYFILE=/app/Caddyfile
 fi
 
