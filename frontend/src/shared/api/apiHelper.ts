@@ -1,5 +1,6 @@
 import { accessTokenHelper } from '.';
 import { IS_CLOUD } from '../../constants';
+import { ApiError } from './ApiError';
 import { RateLimiter } from './RateLimiter';
 import RequestOptions from './RequestOptions';
 
@@ -23,10 +24,16 @@ const handleOrThrowMessageIfResponseError = async (
 
   if (response.status >= 400 && response.status <= 600) {
     let errorMessage: string | undefined;
+    let errorCode: string | undefined;
 
     try {
-      const json = (await response.json()) as { message?: string; error?: string };
+      const json = (await response.json()) as {
+        message?: string;
+        error?: string;
+        code?: string;
+      };
       errorMessage = json.message || json.error;
+      errorCode = json.code;
     } catch {
       try {
         errorMessage = await response.text();
@@ -35,7 +42,10 @@ const handleOrThrowMessageIfResponseError = async (
       }
     }
 
-    throw new Error(errorMessage ?? `${url}: ${await response.text()}`);
+    throw new ApiError(
+      errorMessage ?? errorCode ?? `${url}: request failed with status ${response.status}`,
+      errorCode,
+    );
   }
 };
 

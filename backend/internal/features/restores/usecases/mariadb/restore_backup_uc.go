@@ -18,9 +18,10 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"databasus-backend/internal/config"
-	backups_core "databasus-backend/internal/features/backups/backups/core"
+	backups_core_enums "databasus-backend/internal/features/backups/backups/core/enums"
+	backups_core_logical "databasus-backend/internal/features/backups/backups/core/logical"
 	"databasus-backend/internal/features/backups/backups/encryption"
-	backups_config "databasus-backend/internal/features/backups/config"
+	backups_config_logical "databasus-backend/internal/features/backups/config/logical"
 	"databasus-backend/internal/features/databases"
 	mariadbtypes "databasus-backend/internal/features/databases/databases/mariadb"
 	encryption_secrets "databasus-backend/internal/features/encryption/secrets"
@@ -39,9 +40,9 @@ func (uc *RestoreMariadbBackupUsecase) Execute(
 	parentCtx context.Context,
 	originalDB *databases.Database,
 	restoringToDB *databases.Database,
-	backupConfig *backups_config.BackupConfig,
+	backupConfig *backups_config_logical.LogicalBackupConfig,
 	restore restores_core.Restore,
-	backup *backups_core.Backup,
+	backup *backups_core_logical.LogicalBackup,
 	storage *storages.Storage,
 ) error {
 	if originalDB.Type != databases.DatabaseTypeMariadb {
@@ -111,7 +112,7 @@ func (uc *RestoreMariadbBackupUsecase) restoreFromStorage(
 	mariadbBin string,
 	args []string,
 	password string,
-	backup *backups_core.Backup,
+	backup *backups_core_logical.LogicalBackup,
 	storage *storages.Storage,
 	mdbConfig *mariadbtypes.MariadbDatabase,
 ) error {
@@ -178,7 +179,7 @@ func (uc *RestoreMariadbBackupUsecase) executeMariadbRestore(
 	args []string,
 	myCnfFile string,
 	backupReader io.ReadCloser,
-	backup *backups_core.Backup,
+	backup *backups_core_logical.LogicalBackup,
 ) error {
 	fullArgs := append([]string{"--defaults-file=" + myCnfFile}, args...)
 
@@ -187,7 +188,7 @@ func (uc *RestoreMariadbBackupUsecase) executeMariadbRestore(
 
 	var inputReader io.Reader = backupReader
 
-	if backup.Encryption == backups_config.BackupEncryptionEncrypted {
+	if backup.Encryption == backups_core_enums.BackupEncryptionEncrypted {
 		decryptReader, err := uc.setupDecryption(backupReader, backup)
 		if err != nil {
 			return fmt.Errorf("failed to setup decryption: %w", err)
@@ -250,7 +251,7 @@ func (uc *RestoreMariadbBackupUsecase) executeMariadbRestore(
 
 func (uc *RestoreMariadbBackupUsecase) setupDecryption(
 	reader io.Reader,
-	backup *backups_core.Backup,
+	backup *backups_core_logical.LogicalBackup,
 ) (io.Reader, error) {
 	if backup.EncryptionSalt == nil || backup.EncryptionIV == nil {
 		return nil, fmt.Errorf("backup is encrypted but missing encryption metadata")

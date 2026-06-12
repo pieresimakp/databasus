@@ -578,7 +578,7 @@ func Test_WorkspaceRolePermissions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := createRouter()
-			GetStorageService().SetStorageDatabaseCounter(&mockStorageDatabaseCounter{})
+			SetStorageDatabaseCountersForTest(&mockStorageDatabaseCounter{})
 
 			owner := users_testing.CreateTestUser(users_enums.UserRoleMember)
 			workspace := workspaces_testing.CreateTestWorkspace("Test Workspace", owner, router)
@@ -757,7 +757,7 @@ func Test_SystemStorage_AdminOnlyOperations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := createRouter()
-			GetStorageService().SetStorageDatabaseCounter(&mockStorageDatabaseCounter{})
+			SetStorageDatabaseCountersForTest(&mockStorageDatabaseCounter{})
 
 			owner := users_testing.CreateTestUser(users_enums.UserRoleMember)
 			workspace := workspaces_testing.CreateTestWorkspace("Test Workspace", owner, router)
@@ -956,7 +956,7 @@ func Test_SystemStorage_AdminOnlyOperations(t *testing.T) {
 
 func Test_GetStorages_SystemStorageIncludedForAllUsers(t *testing.T) {
 	router := createRouter()
-	GetStorageService().SetStorageDatabaseCounter(&mockStorageDatabaseCounter{})
+	SetStorageDatabaseCountersForTest(&mockStorageDatabaseCounter{})
 
 	// Create two workspaces with different owners
 	ownerA := users_testing.CreateTestUser(users_enums.UserRoleMember)
@@ -1068,7 +1068,7 @@ func Test_GetStorages_SystemStorageIncludedForAllUsers(t *testing.T) {
 
 func Test_GetSystemStorage_SensitiveDataHiddenForNonAdmin(t *testing.T) {
 	router := createRouter()
-	GetStorageService().SetStorageDatabaseCounter(&mockStorageDatabaseCounter{})
+	SetStorageDatabaseCountersForTest(&mockStorageDatabaseCounter{})
 
 	admin := users_testing.CreateTestUser(users_enums.UserRoleAdmin)
 	member := users_testing.CreateTestUser(users_enums.UserRoleMember)
@@ -1799,7 +1799,7 @@ func Test_TransferStorage_PermissionsEnforced(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := createRouter()
-			GetStorageService().SetStorageDatabaseCounter(&mockStorageDatabaseCounter{})
+			SetStorageDatabaseCountersForTest(&mockStorageDatabaseCounter{})
 
 			sourceOwner := users_testing.CreateTestUser(users_enums.UserRoleMember)
 			targetOwner := users_testing.CreateTestUser(users_enums.UserRoleMember)
@@ -1891,7 +1891,7 @@ func Test_TransferStorage_PermissionsEnforced(t *testing.T) {
 
 func Test_TransferStorageNotManagableWorkspace_TransferFailed(t *testing.T) {
 	router := createRouter()
-	GetStorageService().SetStorageDatabaseCounter(&mockStorageDatabaseCounter{})
+	SetStorageDatabaseCountersForTest(&mockStorageDatabaseCounter{})
 
 	userA := users_testing.CreateTestUser(users_enums.UserRoleMember)
 	userB := users_testing.CreateTestUser(users_enums.UserRoleMember)
@@ -1937,7 +1937,7 @@ func Test_TransferStorageNotManagableWorkspace_TransferFailed(t *testing.T) {
 
 func Test_TransferSystemStorage_TransferBlocked(t *testing.T) {
 	router := createRouter()
-	GetStorageService().SetStorageDatabaseCounter(&mockStorageDatabaseCounter{})
+	SetStorageDatabaseCountersForTest(&mockStorageDatabaseCounter{})
 
 	admin := users_testing.CreateTestUser(users_enums.UserRoleAdmin)
 	workspaceA := workspaces_testing.CreateTestWorkspace("Workspace A", admin, router)
@@ -2057,7 +2057,7 @@ func Test_DeleteWorkspace_SystemStoragesFromAnotherWorkspaceNotRemovedAndWorkspa
 	t *testing.T,
 ) {
 	router := createRouter()
-	GetStorageService().SetStorageDatabaseCounter(&mockStorageDatabaseCounter{})
+	SetStorageDatabaseCountersForTest(&mockStorageDatabaseCounter{})
 
 	admin := users_testing.CreateTestUser(users_enums.UserRoleAdmin)
 	workspaceA := workspaces_testing.CreateTestWorkspace("Workspace A", admin, router)
@@ -2123,7 +2123,7 @@ func Test_DeleteWorkspace_SystemStoragesFromAnotherWorkspaceNotRemovedAndWorkspa
 
 func Test_DeleteWorkspace_WithOwnSystemStorage_ReturnsForbidden(t *testing.T) {
 	router := createRouter()
-	GetStorageService().SetStorageDatabaseCounter(&mockStorageDatabaseCounter{})
+	SetStorageDatabaseCountersForTest(&mockStorageDatabaseCounter{})
 
 	admin := users_testing.CreateTestUser(users_enums.UserRoleAdmin)
 	workspaceA := workspaces_testing.CreateTestWorkspace("Workspace A", admin, router)
@@ -2205,7 +2205,7 @@ func createRouter() *gin.Engine {
 
 	audit_logs.SetupDependencies()
 	SetupDependencies()
-	GetStorageService().SetStorageDatabaseCounter(&mockStorageDatabaseCounter{})
+	SetStorageDatabaseCountersForTest(&mockStorageDatabaseCounter{})
 
 	return router
 }

@@ -14,15 +14,59 @@ import (
 )
 
 type StorageService struct {
-	storageRepository      *StorageRepository
-	workspaceService       *workspaces_services.WorkspaceService
-	auditLogService        *audit_logs.AuditLogService
-	fieldEncryptor         encryption.FieldEncryptor
-	storageDatabaseCounter StorageDatabaseCounter
+	storageRepository       *StorageRepository
+	workspaceService        *workspaces_services.WorkspaceService
+	auditLogService         *audit_logs.AuditLogService
+	fieldEncryptor          encryption.FieldEncryptor
+	storageDatabaseCounters []StorageDatabaseCounter
 }
 
-func (s *StorageService) SetStorageDatabaseCounter(storageDatabaseCounter StorageDatabaseCounter) {
-	s.storageDatabaseCounter = storageDatabaseCounter
+func (s *StorageService) AddStorageDatabaseCounter(
+	storageDatabaseCounter StorageDatabaseCounter,
+) {
+	s.storageDatabaseCounters = append(s.storageDatabaseCounters, storageDatabaseCounter)
+}
+
+func (s *StorageService) GetStorageAttachedDatabasesIDs(
+	storageID uuid.UUID,
+) ([]uuid.UUID, error) {
+	seen := make(map[uuid.UUID]struct{})
+	merged := make([]uuid.UUID, 0)
+
+	for _, counter := range s.storageDatabaseCounters {
+		ids, err := counter.GetStorageAttachedDatabasesIDs(storageID)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, id := range ids {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			merged = append(merged, id)
+		}
+	}
+
+	return merged, nil
+}
+
+func (s *StorageService) IsStorageUsing(storageID uuid.UUID) (bool, error) {
+	ids, err := s.GetStorageAttachedDatabasesIDs(storageID)
+	if err != nil {
+		return false, err
+	}
+
+	return len(ids) > 0, nil
+}
+
+func (s *StorageService) CountDatabasesForStorage(storageID uuid.UUID) (int, error) {
+	ids, err := s.GetStorageAttachedDatabasesIDs(storageID)
+	if err != nil {
+		return 0, err
+	}
+
+	return len(ids), nil
 }
 
 func (s *StorageService) OnBeforeWorkspaceDeletion(workspaceID uuid.UUID) error {
@@ -172,7 +216,7 @@ func (s *StorageService) DeleteStorage(
 		return ErrInsufficientPermissionsToManageStorage
 	}
 
-	attachedDatabasesIDs, err := s.storageDatabaseCounter.GetStorageAttachedDatabasesIDs(storage.ID)
+	attachedDatabasesIDs, err := s.GetStorageAttachedDatabasesIDs(storage.ID)
 	if err != nil {
 		return err
 	}
@@ -363,9 +407,7 @@ func (s *StorageService) TransferStorageToWorkspace(
 		return ErrInsufficientPermissionsInTargetWorkspace
 	}
 
-	attachedDatabasesIDs, err := s.storageDatabaseCounter.GetStorageAttachedDatabasesIDs(
-		existingStorage.ID,
-	)
+	attachedDatabasesIDs, err := s.GetStorageAttachedDatabasesIDs(existingStorage.ID)
 	if err != nil {
 		return err
 	}

@@ -1,21 +1,14 @@
 import { Spin } from 'antd';
-import { useRef, useState } from 'react';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { IS_CLOUD } from '../../../constants';
-import { backupsApi } from '../../../entity/backups';
-import {
-  type Database,
-  DatabaseType,
-  PostgresBackupType,
-  databaseApi,
-} from '../../../entity/databases';
+import { type Database, DatabaseType, databaseApi } from '../../../entity/databases';
 import type { UserProfile } from '../../../entity/users';
-import { BackupsComponent } from '../../backups';
+import { LogicalBackupsComponent } from '../../backups/logical';
+import { PhysicalBackupsComponent } from '../../backups/physical';
 import { BillingComponent } from '../../billing';
 import { HealthckeckAttemptsComponent } from '../../healthcheck';
 import { VerificationsComponent } from '../../verification/runs';
-import { AgentInstallationComponent } from './AgentInstallationComponent';
 import { DatabaseConfigComponent } from './DatabaseConfigComponent';
 
 interface Props {
@@ -35,9 +28,9 @@ export const DatabaseComponent = ({
   onDatabaseDeleted,
   isCanManageDBs,
 }: Props) => {
-  const [currentTab, setCurrentTab] = useState<
-    'config' | 'backups' | 'verifications' | 'installation' | 'billing'
-  >('backups');
+  const [currentTab, setCurrentTab] = useState<'config' | 'backups' | 'verifications' | 'billing'>(
+    'backups',
+  );
 
   const [database, setDatabase] = useState<Database | undefined>();
   const [editDatabase, setEditDatabase] = useState<Database | undefined>();
@@ -50,10 +43,8 @@ export const DatabaseComponent = ({
     setIsHealthcheckVisible(isVisible);
   };
 
-  const isWalDatabase = database?.postgresql?.backupType === PostgresBackupType.WAL_V1;
-  const isPostgresLogicalDatabase =
-    database?.type === DatabaseType.POSTGRES &&
-    database?.postgresql?.backupType !== PostgresBackupType.WAL_V1;
+  const isPostgresDatabase = database?.type === DatabaseType.POSTGRES_LOGICAL;
+  const isPhysicalDatabase = database?.type === DatabaseType.POSTGRES_PHYSICAL;
 
   const loadSettings = () => {
     setDatabase(undefined);
@@ -64,25 +55,6 @@ export const DatabaseComponent = ({
   useEffect(() => {
     loadSettings();
   }, [databaseId]);
-
-  useEffect(() => {
-    if (!database) return;
-
-    if (!isPostgresLogicalDatabase) {
-      setCurrentTab((prev) => (prev === 'verifications' ? 'backups' : prev));
-    }
-
-    if (!isWalDatabase) {
-      setCurrentTab((prev) => (prev === 'installation' ? 'backups' : prev));
-      return;
-    }
-
-    backupsApi.getBackups(database.id, 1, 0).then((response) => {
-      if (response.total === 0) {
-        setCurrentTab('installation');
-      }
-    });
-  }, [database]);
 
   if (!database) {
     return <Spin />;
@@ -109,21 +81,12 @@ export const DatabaseComponent = ({
           Backups
         </div>
 
-        {isPostgresLogicalDatabase && (
+        {isPostgresDatabase && (
           <div
             className={`mr-2 cursor-pointer rounded-tl-md rounded-tr-md px-6 py-2 ${currentTab === 'verifications' ? 'bg-white dark:bg-gray-800' : 'bg-gray-200 dark:bg-gray-700'}`}
             onClick={() => setCurrentTab('verifications')}
           >
             Verifications
-          </div>
-        )}
-
-        {isWalDatabase && (
-          <div
-            className={`mr-2 cursor-pointer rounded-tl-md rounded-tr-md px-6 py-2 ${currentTab === 'installation' ? 'bg-white dark:bg-gray-800' : 'bg-gray-200 dark:bg-gray-700'}`}
-            onClick={() => setCurrentTab('installation')}
-          >
-            Agent
           </div>
         )}
 
@@ -152,34 +115,39 @@ export const DatabaseComponent = ({
 
       {currentTab === 'backups' && (
         <>
-          {!isWalDatabase && (
-            <HealthckeckAttemptsComponent
+          <HealthckeckAttemptsComponent
+            database={database}
+            onVisibilityChange={handleHealthcheckVisibilityChange}
+          />
+
+          {isPhysicalDatabase ? (
+            <PhysicalBackupsComponent
               database={database}
-              onVisibilityChange={handleHealthcheckVisibilityChange}
+              isCanManageDBs={isCanManageDBs}
+              isDirectlyUnderTab={!isHealthcheckVisible}
+              scrollContainerRef={scrollContainerRef}
+              onNavigateToBilling={() => setCurrentTab('billing')}
+            />
+          ) : (
+            <LogicalBackupsComponent
+              database={database}
+              isCanManageDBs={isCanManageDBs}
+              isDirectlyUnderTab={!isHealthcheckVisible}
+              scrollContainerRef={scrollContainerRef}
+              onNavigateToBilling={() => setCurrentTab('billing')}
+              onNavigateToVerifications={() => setCurrentTab('verifications')}
             />
           )}
-          <BackupsComponent
-            database={database}
-            isCanManageDBs={isCanManageDBs}
-            isDirectlyUnderTab={isWalDatabase || !isHealthcheckVisible}
-            scrollContainerRef={scrollContainerRef}
-            onNavigateToBilling={() => setCurrentTab('billing')}
-            onNavigateToVerifications={() => setCurrentTab('verifications')}
-          />
         </>
       )}
 
-      {currentTab === 'verifications' && isPostgresLogicalDatabase && (
+      {currentTab === 'verifications' && isPostgresDatabase && (
         <VerificationsComponent
           database={database}
           isCanManageDBs={isCanManageDBs}
           isDirectlyUnderTab={true}
           scrollContainerRef={scrollContainerRef}
         />
-      )}
-
-      {currentTab === 'installation' && isWalDatabase && (
-        <AgentInstallationComponent database={database} onTokenGenerated={loadSettings} />
       )}
 
       {currentTab === 'billing' && IS_CLOUD && isCanManageDBs && (

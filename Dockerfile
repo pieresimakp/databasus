@@ -66,43 +66,6 @@ RUN CGO_ENABLED=0 \
   go build -o /app/main ./cmd/main.go
 
 
-# ========= BUILD AGENT =========
-# Builds the databasus-agent CLI binary for BOTH x86_64 and ARM64.
-# Both architectures are always built because:
-# - Databasus server runs on one arch (e.g. amd64)
-# - The agent runs on remote PostgreSQL servers that may be on a
-#   different arch (e.g. arm64)
-# - The backend serves the correct binary based on the agent's
-#   ?arch= query parameter
-#
-# We cross-compile from the build platform (no QEMU needed) because the
-# agent is pure Go with zero C dependencies.
-# CGO_ENABLED=0 produces fully static binaries — no glibc/musl dependency,
-# so the agent runs on any Linux distro (Alpine, Debian, Ubuntu, RHEL, etc.).
-# APP_VERSION is baked into the binary via -ldflags so the agent can
-# compare its version against the server and auto-update when needed.
-FROM --platform=$BUILDPLATFORM golang:1.26.3 AS agent-build
-
-ARG APP_VERSION=dev
-
-WORKDIR /agent
-
-COPY agent/backup/go.mod ./
-RUN go mod download
-
-COPY agent/backup/ ./
-
-# Build for x86_64 (amd64) — static binary, no glibc dependency
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags "-X main.Version=${APP_VERSION}" \
-    -o /agent-binaries/databasus-agent-linux-amd64 ./cmd/main.go
-
-# Build for ARM64 (arm64) — static binary, no glibc dependency
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-    go build -ldflags "-X main.Version=${APP_VERSION}" \
-    -o /agent-binaries/databasus-agent-linux-arm64 ./cmd/main.go
-
-
 # ========= BUILD VERIFICATION AGENT =========
 FROM --platform=$BUILDPLATFORM golang:1.26.3 AS verification-agent-build
 
@@ -202,9 +165,9 @@ COPY --from=backend-build /app/ui/build ./ui/build
 # Copy cloud static HTML template (injected into index.html at startup when IS_CLOUD=true)
 COPY frontend/cloud-root-content.html /app/cloud-root-content.html
 
-# Copy agent binaries (both architectures) — served by the backend
-# at GET /api/v1/system/agent?arch=amd64|arm64
-COPY --from=agent-build /agent-binaries ./agent-binaries
+# Copy verification agent binaries (both architectures) — served by the backend
+# at GET /api/v1/system/verification-agent?arch=amd64|arm64
+RUN mkdir -p ./agent-binaries
 COPY --from=verification-agent-build /verification-agent-binaries/* ./agent-binaries/
 
 # Bake .env.example as /.env so the binary has defaults when no env file is
@@ -446,6 +409,36 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'databasus')
 \\gexec
 \\q
 SQL
+
+# ========= Refuse to start if legacy WAL backup data exists =========
+# The agent-based WAL_V1 backup type was removed. Existing installs with
+# WAL-mode databases must downgrade, manually remove them and then upgrade.
+echo "Checking for legacy WAL backup configuration..."
+if [ -n "\${DANGEROUS_EXTERNAL_DATABASE_DSN:-}" ]; then
+    WAL_CHECK_DSN="\${DANGEROUS_EXTERNAL_DATABASE_DSN}"
+else
+    WAL_CHECK_DSN="postgres://postgres:Q1234567@localhost:5437/databasus"
+fi
+
+WAL_CHECK_COL=\$(gosu databasus \$PG_BIN/psql "\$WAL_CHECK_DSN" -tA -c "SELECT 1 FROM information_schema.columns WHERE table_name='postgresql_databases' AND column_name='backup_type' LIMIT 1" 2>/dev/null || true)
+
+if [ "\$WAL_CHECK_COL" = "1" ]; then
+    WAL_CHECK_ROW=\$(gosu databasus \$PG_BIN/psql "\$WAL_CHECK_DSN" -tA -c "SELECT 1 FROM postgresql_databases WHERE backup_type='WAL_V1' LIMIT 1" 2>/dev/null || true)
+    if [ "\$WAL_CHECK_ROW" = "1" ]; then
+        echo ""
+        echo "=========================================="
+        echo "ERROR: Agent (WAL_V1) backup approach is no longer supported."
+        echo "=========================================="
+        echo ""
+        echo "Please downgrade to version 3.42.0, remove all WAL-mode databases"
+        echo "manually and then upgrade again. This safeguard exists to avoid"
+        echo "corrupting already-set-up agents."
+        echo ""
+        echo "=========================================="
+        exit 1
+    fi
+fi
+echo "No legacy WAL backup data detected."
 
 # Start the main application
 echo "Starting Databasus application..."

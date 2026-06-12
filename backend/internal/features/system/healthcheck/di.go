@@ -1,15 +1,15 @@
 package system_healthcheck
 
 import (
-	"databasus-backend/internal/features/backups/backups/backuping"
+	backuping_logical "databasus-backend/internal/features/backups/backups/backuping/logical"
 	"databasus-backend/internal/features/disk"
 	verification_agents "databasus-backend/internal/features/verification/agents"
 )
 
 var healthcheckService = &HealthcheckService{
 	disk.GetDiskService(),
-	backuping.GetBackupsScheduler(),
-	backuping.GetBackuperNode(),
+	backuping_logical.GetBackupsScheduler(),
+	backuping_logical.GetBackuperNode(),
 	verification_agents.GetAgentService(),
 }
 

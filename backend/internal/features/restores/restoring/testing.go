@@ -11,11 +11,11 @@ import (
 	"github.com/google/uuid"
 
 	"databasus-backend/internal/config"
-	backups_core "databasus-backend/internal/features/backups/backups/core"
+	backups_core_logical "databasus-backend/internal/features/backups/backups/core/logical"
 	backups_services "databasus-backend/internal/features/backups/backups/services"
-	backups_config "databasus-backend/internal/features/backups/config"
+	backups_config_logical "databasus-backend/internal/features/backups/config/logical"
 	"databasus-backend/internal/features/databases"
-	"databasus-backend/internal/features/databases/databases/postgresql"
+	postgresql_logical "databasus-backend/internal/features/databases/databases/postgresql/logical"
 	restores_core "databasus-backend/internal/features/restores/core"
 	"databasus-backend/internal/features/restores/usecases"
 	"databasus-backend/internal/features/storages"
@@ -31,7 +31,7 @@ func CreateTestRouter() *gin.Engine {
 		workspaces_controllers.GetWorkspaceController(),
 		workspaces_controllers.GetMembershipController(),
 		databases.GetDatabaseController(),
-		backups_config.GetBackupConfigController(),
+		backups_config_logical.GetBackupConfigController(),
 	)
 
 	return router
@@ -44,7 +44,7 @@ func CreateTestRestorerNode() *RestorerNode {
 		backups_services.GetBackupService(),
 		encryption.GetFieldEncryptor(),
 		restoreRepository,
-		backups_config.GetBackupConfigService(),
+		backups_config_logical.GetBackupConfigService(),
 		storages.GetStorageService(),
 		restoreNodesRegistry,
 		logger.GetLogger(),
@@ -63,7 +63,7 @@ func CreateTestRestorerNodeWithUsecase(usecase restores_core.RestoreBackupUsecas
 		backups_services.GetBackupService(),
 		encryption.GetFieldEncryptor(),
 		restoreRepository,
-		backups_config.GetBackupConfigService(),
+		backups_config_logical.GetBackupConfigService(),
 		storages.GetStorageService(),
 		restoreNodesRegistry,
 		logger.GetLogger(),
@@ -80,7 +80,7 @@ func CreateTestRestoresScheduler() *RestoresScheduler {
 		restoreRepository,
 		backups_services.GetBackupService(),
 		storages.GetStorageService(),
-		backups_config.GetBackupConfigService(),
+		backups_config_logical.GetBackupConfigService(),
 		restoreNodesRegistry,
 		time.Now().UTC(),
 		logger.GetLogger(),
@@ -309,13 +309,13 @@ func WaitForActiveTasksDecrease(
 // CreateTestRestore creates a test restore with the given backup and status
 func CreateTestRestore(
 	t *testing.T,
-	backup *backups_core.Backup,
+	backup *backups_core_logical.LogicalBackup,
 	status restores_core.RestoreStatus,
 ) *restores_core.Restore {
 	restore := &restores_core.Restore{
 		BackupID: backup.ID,
 		Status:   status,
-		PostgresqlDatabase: &postgresql.PostgresqlDatabase{
+		PostgresqlLogicalDatabase: &postgresql_logical.PostgresqlLogicalDatabase{
 			Host:     config.GetEnv().TestLocalhost,
 			Port:     5432,
 			Username: "test",

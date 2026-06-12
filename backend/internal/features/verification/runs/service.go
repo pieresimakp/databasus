@@ -12,10 +12,9 @@ import (
 	"gorm.io/gorm"
 
 	"databasus-backend/internal/features/audit_logs"
-	backups_core "databasus-backend/internal/features/backups/backups/core"
+	backups_core_logical "databasus-backend/internal/features/backups/backups/core/logical"
 	backups_services "databasus-backend/internal/features/backups/backups/services"
 	"databasus-backend/internal/features/databases"
-	"databasus-backend/internal/features/databases/databases/postgresql"
 	users_models "databasus-backend/internal/features/users/models"
 	verification_agents "databasus-backend/internal/features/verification/agents"
 	verification_config "databasus-backend/internal/features/verification/config"
@@ -26,7 +25,7 @@ import (
 type VerificationService struct {
 	verificationRepository *VerificationRepository
 	databaseService        *databases.DatabaseService
-	backupService          *backups_services.BackupService
+	backupService          *backups_services.LogicalBackupService
 	configService          *verification_config.VerificationConfigService
 	notifierService        NotificationSender
 	workspaceService       *workspaces_services.WorkspaceService
@@ -64,7 +63,7 @@ func (s *VerificationService) EnqueueManualVerification(
 		return nil, errors.New("insufficient permissions to trigger verification for this database")
 	}
 
-	if err := s.guardBackupIsVerifiable(backup, database); err != nil {
+	if err := s.guardBackupIsVerifiable(backup); err != nil {
 		return nil, err
 	}
 
@@ -616,13 +615,13 @@ func (s *VerificationService) syncBackupVerificationStatus(
 	verification *RestoreVerification,
 	terminalStatus VerificationStatus,
 ) {
-	var status backups_core.RestoreVerificationStatus
+	var status backups_core_logical.RestoreVerificationStatus
 
 	switch terminalStatus {
 	case VerificationStatusCompleted:
-		status = backups_core.RestoreVerificationStatusVerifiedSuccessful
+		status = backups_core_logical.RestoreVerificationStatusVerifiedSuccessful
 	case VerificationStatusFailed:
-		status = backups_core.RestoreVerificationStatusVerificationFailed
+		status = backups_core_logical.RestoreVerificationStatusVerificationFailed
 	default:
 		return
 	}
@@ -694,20 +693,10 @@ func (s *VerificationService) notifyTerminal(
 }
 
 func (s *VerificationService) guardBackupIsVerifiable(
-	backup *backups_core.Backup,
-	database *databases.Database,
+	backup *backups_core_logical.LogicalBackup,
 ) error {
-	if backup.Status != backups_core.BackupStatusCompleted {
+	if backup.Status != backups_core_logical.BackupStatusCompleted {
 		return errors.New("only COMPLETED backups can be verified")
-	}
-
-	if backup.PgWalBackupType != nil {
-		return errors.New("WAL segments cannot be verified standalone; only PG_DUMP backups are supported")
-	}
-
-	if database.Postgresql != nil &&
-		database.Postgresql.BackupType == postgresql.PostgresBackupTypeWalV1 {
-		return errors.New("verification is not supported for WAL-based databases")
 	}
 
 	return nil
@@ -720,8 +709,8 @@ func (s *VerificationService) guardBackupIsVerifiable(
 // no-op job to an agent.
 func validateDatabaseIsVerifiable(database *databases.Database) error {
 	switch database.Type {
-	case databases.DatabaseTypePostgres:
-		if database.Postgresql == nil || database.Postgresql.Version == "" {
+	case databases.DatabaseTypePostgresLogical:
+		if database.PostgresqlLogical == nil || database.PostgresqlLogical.Version == "" {
 			return errors.New("postgresql sub-row missing or version empty")
 		}
 
@@ -733,13 +722,12 @@ func validateDatabaseIsVerifiable(database *databases.Database) error {
 
 // sanitizeDatabaseForAgent strips every field the agent has no business seeing
 // before the row goes over the wire: engine-specific credentials via the
-// existing HideSensitiveData contract, notifier secrets (webhook URLs, SMTP
-// creds), and the agent token. Mutates the passed row in place — gorm doesn't
-// auto-save, and the caller owns the row from GetDatabaseByID.
+// existing HideSensitiveData contract and notifier secrets (webhook URLs, SMTP
+// creds). Mutates the passed row in place — gorm doesn't auto-save, and the
+// caller owns the row from GetDatabaseByID.
 func sanitizeDatabaseForAgent(database *databases.Database) *databases.Database {
 	database.HideSensitiveData()
 	database.Notifiers = nil
-	database.AgentToken = nil
 
 	return database
 }

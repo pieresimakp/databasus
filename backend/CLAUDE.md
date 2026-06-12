@@ -70,14 +70,22 @@ func (r *Repository) FindById(id uuid.UUID) (*models.Task, error) {
 
 ## Comments
 
-- **No obvious comments** — don't restate what the code already shows.
-- **Explain *why*, not *what*** — code shows what happens; comments explain business rules, hidden constraints, or non-obvious optimizations.
-- **Prefer refactoring over commenting** — if code needs explaining, consider clearer names or smaller functions first.
+**Comment only in the rare, genuinely non-obvious case.** The default is no comment. A
+comment must earn its place by carrying something the code itself cannot — never by
+restating, narrating, or labelling what is already visible.
+
+- **Almost never comment.** If you're about to write one, first try a clearer name or a
+  smaller function. Self-explanatory code with no comment beats commented code.
+- **A comment may only explain *why*** — a business rule, a hidden cross-system constraint,
+  a non-obvious algorithm or optimisation, an ADR reference. Never *what* the code does.
+- **Don't narrate the obvious.** No "first failing check", no "the detected platform", no
+  "re-open the connection", no step-by-step play-by-play. If the reader can see it, delete it.
+- **A name that needs a "what" comment is a naming bug** — rename until the comment is
+  redundant, then delete it.
 - **Swagger comments are mandatory** for every HTTP endpoint.
-- **Complex algorithms deserve comments** — formulas, business rules, non-obvious optimizations.
 - **No "Summary" / "Conclusion" sections in `.md` files** unless explicitly requested.
 
-Bad (comments restate the function name):
+Bad (comments restate the code / narrate the obvious):
 
 ```go
 // Create test project
@@ -85,6 +93,9 @@ project := CreateTestProject(projectName, user, router)
 
 // CreateValidLogItems creates valid log items for testing
 func CreateValidLogItems(count int, uniqueID string) []logs_receiving.LogItemRequestDTO {
+
+// the first failing check, plus the detected platform
+type ConnectionDiagnostics struct {
 ```
 
 ---
@@ -266,12 +277,24 @@ For migrations stub generation use Makefile and only then fill manually.
 
 Examples: `Test_CreateApiKey_WhenUserIsProjectOwner_ApiKeyCreated`, `Test_DeleteApiKey_WhenUserIsProjectMember_ReturnsForbidden`, `Test_GetProjectAuditLogs_WithDifferentUserRoles_EnforcesPermissionsCorrectly`, `Test_ProjectLifecycleE2E_CompletesSuccessfully`.
 
+This convention applies to `t.Run` subtest names too. When a per-version orchestrator runs former
+top-level test functions as subtests (see ADR-0013), name each subtest the full former function
+name verbatim — `t.Run("Test_CreateReadOnlyUser_UserCanReadButNotWrite", ...)`, not an abbreviation.
+Reserve non-`Test_` subtest names for grouping labels only: the engine-version group (`"PostgreSQL 16"`)
+and per-case variants (`"CPU=4 directory"`).
+
 ### Prefer controller tests over unit tests
 
 - Test through HTTP endpoints whenever possible — that's the contract real callers see.
 - Avoid testing repositories or services in isolation; cover them via the API.
 - Use unit tests only for complex model logic with no API surface.
 - File names: `controller_test.go` or `service_test.go` — never `integration_test.go`.
+
+### `features/tests/` is for backup → restore cycle tests only
+
+The `internal/features/tests/` package is reserved for **end-to-end tests that exercise a full backup → restore cycle** against a real database container (today: `tests/logical/`; physical restore tests land here once the restore path ships). These tests cross multiple feature packages and have no single "owner" file, so they live in this shared package.
+
+**Everything else** — controller tests, service tests, executor / backuper tests, slot-lifecycle tests, helpers — lives next to its source per the source-split rule (`backup_slot.go` → `backup_slot_test.go`, `full.go` → `full_test.go`). Shared per-package test fixtures go in that package's `testing.go`.
 
 ### Shared testing utilities
 

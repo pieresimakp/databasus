@@ -27,7 +27,7 @@ type VerificationScheduler struct {
 	service                  *VerificationService
 	verificaionConfigService *verification_config.VerificationConfigService
 	agentService             *verification_agents.AgentService
-	backupService            *backups_services.BackupService
+	backupService            *backups_services.LogicalBackupService
 	databaseService          *databases.DatabaseService
 	logger                   *slog.Logger
 

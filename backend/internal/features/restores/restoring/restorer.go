@@ -13,7 +13,7 @@ import (
 
 	"databasus-backend/internal/config"
 	backups_services "databasus-backend/internal/features/backups/backups/services"
-	backups_config "databasus-backend/internal/features/backups/config"
+	backups_config_logical "databasus-backend/internal/features/backups/config/logical"
 	"databasus-backend/internal/features/databases"
 	restores_core "databasus-backend/internal/features/restores/core"
 	"databasus-backend/internal/features/storages"
@@ -31,10 +31,10 @@ type RestorerNode struct {
 	nodeID uuid.UUID
 
 	databaseService      *databases.DatabaseService
-	backupService        *backups_services.BackupService
+	backupService        *backups_services.LogicalBackupService
 	fieldEncryptor       util_encryption.FieldEncryptor
 	restoreRepository    *restores_core.RestoreRepository
-	backupConfigService  *backups_config.BackupConfigService
+	backupConfigService  *backups_config_logical.BackupConfigService
 	storageService       *storages.StorageService
 	restoreNodesRegistry *RestoreNodesRegistry
 	logger               *slog.Logger
@@ -194,11 +194,11 @@ func (n *RestorerNode) MakeRestore(restoreID uuid.UUID) {
 
 	// Create restoring database from cached credentials
 	restoringToDB := &databases.Database{
-		Type:       database.Type,
-		Postgresql: dbCache.PostgresqlDatabase,
-		Mysql:      dbCache.MysqlDatabase,
-		Mariadb:    dbCache.MariadbDatabase,
-		Mongodb:    dbCache.MongodbDatabase,
+		Type:              database.Type,
+		PostgresqlLogical: dbCache.PostgresqlLogicalDatabase,
+		Mysql:             dbCache.MysqlDatabase,
+		Mariadb:           dbCache.MariadbDatabase,
+		Mongodb:           dbCache.MongodbDatabase,
 	}
 
 	if err := restoringToDB.PopulateDbData(n.logger, n.fieldEncryptor); err != nil {
@@ -215,8 +215,8 @@ func (n *RestorerNode) MakeRestore(restoreID uuid.UUID) {
 	}
 
 	isExcludeExtensions := false
-	if dbCache.PostgresqlDatabase != nil {
-		isExcludeExtensions = dbCache.PostgresqlDatabase.IsExcludeExtensions
+	if dbCache.PostgresqlLogicalDatabase != nil {
+		isExcludeExtensions = dbCache.PostgresqlLogicalDatabase.IsExcludeExtensions
 	}
 
 	err = n.restoreBackupUsecase.Execute(

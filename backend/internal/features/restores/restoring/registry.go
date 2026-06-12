@@ -49,7 +49,31 @@ type RestoreNodesRegistry struct {
 	pubsubRestores    *cache_utils.PubSubManager
 	pubsubCompletions *cache_utils.PubSubManager
 
+	// namespace isolates one pool of restore nodes from another by prefixing
+	// every Redis key and pub/sub channel. Empty in production; per-worker
+	// ("w{slot}:") under parallel tests so concurrent test binaries never share
+	// node state or submit/completion messages.
+	namespace string
+
 	hasRun atomic.Bool
+}
+
+func NewRestoreNodesRegistry(
+	client valkey.Client,
+	logger *slog.Logger,
+	timeout time.Duration,
+	pubsubRestores *cache_utils.PubSubManager,
+	pubsubCompletions *cache_utils.PubSubManager,
+	namespace string,
+) *RestoreNodesRegistry {
+	return &RestoreNodesRegistry{
+		client:            client,
+		logger:            logger,
+		timeout:           timeout,
+		pubsubRestores:    pubsubRestores,
+		pubsubCompletions: pubsubCompletions,
+		namespace:         namespace,
+	}
 }
 
 func (r *RestoreNodesRegistry) Run(ctx context.Context) {
@@ -82,7 +106,7 @@ func (r *RestoreNodesRegistry) GetAvailableNodes() ([]RestoreNode, error) {
 
 	var allKeys []string
 	cursor := uint64(0)
-	pattern := nodeInfoKeyPrefix + "*" + nodeInfoKeySuffix
+	pattern := r.nodeInfoPattern()
 
 	for {
 		result := r.client.Do(
@@ -152,7 +176,7 @@ func (r *RestoreNodesRegistry) GetRestoreNodesStats() ([]RestoreNodeStats, error
 
 	var allKeys []string
 	cursor := uint64(0)
-	pattern := nodeActiveRestoresPrefix + "*" + nodeActiveRestoresSuffix
+	pattern := r.activeRestoresPattern()
 
 	for {
 		result := r.client.Do(
@@ -189,9 +213,12 @@ func (r *RestoreNodesRegistry) GetRestoreNodesStats() ([]RestoreNodeStats, error
 	var nodeInfoKeys []string
 	nodeIDToStatsKey := make(map[string]string)
 	for key := range keyDataMap {
-		nodeID := r.extractNodeIDFromKey(key, nodeActiveRestoresPrefix, nodeActiveRestoresSuffix)
-		nodeIDStr := nodeID.String()
-		infoKey := fmt.Sprintf("%s%s%s", nodeInfoKeyPrefix, nodeIDStr, nodeInfoKeySuffix)
+		nodeID := r.extractNodeIDFromKey(
+			key,
+			r.namespace+nodeActiveRestoresPrefix,
+			nodeActiveRestoresSuffix,
+		)
+		infoKey := r.nodeInfoKey(nodeID.String())
 		nodeInfoKeys = append(nodeInfoKeys, infoKey)
 		nodeIDToStatsKey[infoKey] = key
 	}
@@ -246,12 +273,7 @@ func (r *RestoreNodesRegistry) IncrementRestoresInProgress(nodeID uuid.UUID) err
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
 
-	key := fmt.Sprintf(
-		"%s%s%s",
-		nodeActiveRestoresPrefix,
-		nodeID.String(),
-		nodeActiveRestoresSuffix,
-	)
+	key := r.activeRestoresKey(nodeID.String())
 	result := r.client.Do(ctx, r.client.B().Incr().Key(key).Build())
 
 	if result.Error() != nil {
@@ -269,12 +291,7 @@ func (r *RestoreNodesRegistry) DecrementRestoresInProgress(nodeID uuid.UUID) err
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
 
-	key := fmt.Sprintf(
-		"%s%s%s",
-		nodeActiveRestoresPrefix,
-		nodeID.String(),
-		nodeActiveRestoresSuffix,
-	)
+	key := r.activeRestoresKey(nodeID.String())
 	result := r.client.Do(ctx, r.client.B().Decr().Key(key).Build())
 
 	if result.Error() != nil {
@@ -318,7 +335,7 @@ func (r *RestoreNodesRegistry) HearthbeatNodeInRegistry(
 		return fmt.Errorf("failed to marshal restore node: %w", err)
 	}
 
-	key := fmt.Sprintf("%s%s%s", nodeInfoKeyPrefix, restoreNode.ID.String(), nodeInfoKeySuffix)
+	key := r.nodeInfoKey(restoreNode.ID.String())
 	result := r.client.Do(
 		ctx,
 		r.client.B().Set().Key(key).Value(string(data)).Build(),
@@ -335,13 +352,8 @@ func (r *RestoreNodesRegistry) UnregisterNodeFromRegistry(restoreNode RestoreNod
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
 
-	infoKey := fmt.Sprintf("%s%s%s", nodeInfoKeyPrefix, restoreNode.ID.String(), nodeInfoKeySuffix)
-	counterKey := fmt.Sprintf(
-		"%s%s%s",
-		nodeActiveRestoresPrefix,
-		restoreNode.ID.String(),
-		nodeActiveRestoresSuffix,
-	)
+	infoKey := r.nodeInfoKey(restoreNode.ID.String())
+	counterKey := r.activeRestoresKey(restoreNode.ID.String())
 
 	result := r.client.Do(
 		ctx,
@@ -374,7 +386,7 @@ func (r *RestoreNodesRegistry) AssignRestoreToNode(
 		return fmt.Errorf("failed to marshal restore submit message: %w", err)
 	}
 
-	err = r.pubsubRestores.Publish(ctx, restoreSubmitChannel, string(messageJSON))
+	err = r.pubsubRestores.Publish(ctx, r.submitChannel(), string(messageJSON))
 	if err != nil {
 		return fmt.Errorf("failed to publish restore submit message: %w", err)
 	}
@@ -402,7 +414,7 @@ func (r *RestoreNodesRegistry) SubscribeNodeForRestoresAssignment(
 		handler(msg.RestoreID, msg.IsCallNotifier)
 	}
 
-	err := r.pubsubRestores.Subscribe(ctx, restoreSubmitChannel, wrappedHandler)
+	err := r.pubsubRestores.Subscribe(ctx, r.submitChannel(), wrappedHandler)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to restore submit channel: %w", err)
 	}
@@ -437,7 +449,7 @@ func (r *RestoreNodesRegistry) PublishRestoreCompletion(
 		return fmt.Errorf("failed to marshal restore completion message: %w", err)
 	}
 
-	err = r.pubsubCompletions.Publish(ctx, restoreCompletionChannel, string(messageJSON))
+	err = r.pubsubCompletions.Publish(ctx, r.completionChannel(), string(messageJSON))
 	if err != nil {
 		return fmt.Errorf("failed to publish restore completion message: %w", err)
 	}
@@ -460,7 +472,7 @@ func (r *RestoreNodesRegistry) SubscribeForRestoresCompletions(
 		handler(msg.NodeID, msg.RestoreID)
 	}
 
-	err := r.pubsubCompletions.Subscribe(ctx, restoreCompletionChannel, wrappedHandler)
+	err := r.pubsubCompletions.Subscribe(ctx, r.completionChannel(), wrappedHandler)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to restore completion channel: %w", err)
 	}
@@ -542,7 +554,7 @@ func (r *RestoreNodesRegistry) cleanupDeadNodes() error {
 
 	var allKeys []string
 	cursor := uint64(0)
-	pattern := nodeInfoKeyPrefix + "*" + nodeInfoKeySuffix
+	pattern := r.nodeInfoPattern()
 
 	for {
 		result := r.client.Do(
@@ -598,13 +610,8 @@ func (r *RestoreNodesRegistry) cleanupDeadNodes() error {
 
 		if node.LastHeartbeat.Before(threshold) {
 			nodeID := node.ID.String()
-			infoKey := fmt.Sprintf("%s%s%s", nodeInfoKeyPrefix, nodeID, nodeInfoKeySuffix)
-			statsKey := fmt.Sprintf(
-				"%s%s%s",
-				nodeActiveRestoresPrefix,
-				nodeID,
-				nodeActiveRestoresSuffix,
-			)
+			infoKey := r.nodeInfoKey(nodeID)
+			statsKey := r.activeRestoresKey(nodeID)
 
 			deadNodeKeys = append(deadNodeKeys, infoKey, statsKey)
 			r.logger.Info(
@@ -639,4 +646,32 @@ func (r *RestoreNodesRegistry) cleanupDeadNodes() error {
 
 	r.logger.Info("Cleaned up dead nodes", "deletedKeysCount", deletedCount)
 	return nil
+}
+
+// Namespaced Redis key / channel helpers. The namespace prefix isolates one
+// restore-node pool from another in the shared keyspace (empty in production,
+// per-worker under parallel tests).
+
+func (r *RestoreNodesRegistry) nodeInfoKey(nodeID string) string {
+	return r.namespace + nodeInfoKeyPrefix + nodeID + nodeInfoKeySuffix
+}
+
+func (r *RestoreNodesRegistry) activeRestoresKey(nodeID string) string {
+	return r.namespace + nodeActiveRestoresPrefix + nodeID + nodeActiveRestoresSuffix
+}
+
+func (r *RestoreNodesRegistry) nodeInfoPattern() string {
+	return r.namespace + nodeInfoKeyPrefix + "*" + nodeInfoKeySuffix
+}
+
+func (r *RestoreNodesRegistry) activeRestoresPattern() string {
+	return r.namespace + nodeActiveRestoresPrefix + "*" + nodeActiveRestoresSuffix
+}
+
+func (r *RestoreNodesRegistry) submitChannel() string {
+	return r.namespace + restoreSubmitChannel
+}
+
+func (r *RestoreNodesRegistry) completionChannel() string {
+	return r.namespace + restoreCompletionChannel
 }

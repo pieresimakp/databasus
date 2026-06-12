@@ -8,11 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"databasus-backend/internal/config"
-	backups_controllers "databasus-backend/internal/features/backups/backups/controllers"
-	backups_core "databasus-backend/internal/features/backups/backups/core"
-	backups_config "databasus-backend/internal/features/backups/config"
+	backups_controllers_logical "databasus-backend/internal/features/backups/backups/controllers/logical"
+	backups_core_logical "databasus-backend/internal/features/backups/backups/core/logical"
+	backups_config_logical "databasus-backend/internal/features/backups/config/logical"
 	"databasus-backend/internal/features/databases"
-	"databasus-backend/internal/features/databases/databases/postgresql"
+	postgresql_logical "databasus-backend/internal/features/databases/databases/postgresql/logical"
 	"databasus-backend/internal/features/notifiers"
 	restores_core "databasus-backend/internal/features/restores/core"
 	"databasus-backend/internal/features/storages"
@@ -36,7 +36,7 @@ func Test_CheckDeadNodesAndFailRestores_NodeDies_FailsRestoreAndCleansUpRegistry
 	var mockNodeID uuid.UUID
 
 	defer func() {
-		backupRepo := backups_core.BackupRepository{}
+		backupRepo := backups_core_logical.BackupRepository{}
 		backups, _ := backupRepo.FindByDatabaseID(database.ID)
 		for _, backup := range backups {
 			backupRepo.DeleteByID(backup.ID)
@@ -65,10 +65,10 @@ func Test_CheckDeadNodesAndFailRestores_NodeDies_FailsRestoreAndCleansUpRegistry
 		cache_utils.ClearAllCache()
 	}()
 
-	backups_config.EnableBackupsForTestDatabase(database.ID, storage)
+	backups_config_logical.EnableBackupsForTestDatabase(database.ID, storage)
 
 	// Create a test backup
-	backup := backups_controllers.CreateTestBackup(database.ID, storage.ID)
+	backup := backups_controllers_logical.CreateTestBackup(database.ID, storage.ID)
 
 	var err error
 	// Register mock node without subscribing to restores (simulates node crash after registration)
@@ -143,7 +143,7 @@ func Test_OnRestoreCompleted_TaskIsNotRestore_SkipsProcessing(t *testing.T) {
 	var mockNodeID uuid.UUID
 
 	defer func() {
-		backupRepo := backups_core.BackupRepository{}
+		backupRepo := backups_core_logical.BackupRepository{}
 		backups, _ := backupRepo.FindByDatabaseID(database.ID)
 		for _, backup := range backups {
 			backupRepo.DeleteByID(backup.ID)
@@ -168,10 +168,10 @@ func Test_OnRestoreCompleted_TaskIsNotRestore_SkipsProcessing(t *testing.T) {
 		cache_utils.ClearAllCache()
 	}()
 
-	backups_config.EnableBackupsForTestDatabase(database.ID, storage)
+	backups_config_logical.EnableBackupsForTestDatabase(database.ID, storage)
 
 	// Create a test backup
-	backup := backups_controllers.CreateTestBackup(database.ID, storage.ID)
+	backup := backups_controllers_logical.CreateTestBackup(database.ID, storage.ID)
 
 	// Register mock node
 	mockNodeID = uuid.New()
@@ -322,7 +322,7 @@ func Test_FailRestoresInProgress_SchedulerStarts_UpdatesStatus(t *testing.T) {
 	database := databases.CreateTestDatabase(workspace.ID, storage, notifier)
 
 	defer func() {
-		backupRepo := backups_core.BackupRepository{}
+		backupRepo := backups_core_logical.BackupRepository{}
 		backups, _ := backupRepo.FindByDatabaseID(database.ID)
 		for _, backup := range backups {
 			backupRepo.DeleteByID(backup.ID)
@@ -354,10 +354,10 @@ func Test_FailRestoresInProgress_SchedulerStarts_UpdatesStatus(t *testing.T) {
 		cache_utils.ClearAllCache()
 	}()
 
-	backups_config.EnableBackupsForTestDatabase(database.ID, storage)
+	backups_config_logical.EnableBackupsForTestDatabase(database.ID, storage)
 
 	// Create a test backup
-	backup := backups_controllers.CreateTestBackup(database.ID, storage.ID)
+	backup := backups_controllers_logical.CreateTestBackup(database.ID, storage.ID)
 
 	// Create two in-progress restores that should be failed on scheduler restart
 	restore1 := &restores_core.Restore{
@@ -443,7 +443,7 @@ func Test_StartRestore_RestoreCompletes_DecrementsActiveTaskCount(t *testing.T) 
 	database := databases.CreateTestDatabase(workspace.ID, storage, notifier)
 
 	defer func() {
-		backupRepo := backups_core.BackupRepository{}
+		backupRepo := backups_core_logical.BackupRepository{}
 		backups, _ := backupRepo.FindByDatabaseID(database.ID)
 		for _, backup := range backups {
 			backupRepo.DeleteByID(backup.ID)
@@ -462,10 +462,10 @@ func Test_StartRestore_RestoreCompletes_DecrementsActiveTaskCount(t *testing.T) 
 		workspaces_testing.RemoveTestWorkspace(workspace, router)
 	}()
 
-	backups_config.EnableBackupsForTestDatabase(database.ID, storage)
+	backups_config_logical.EnableBackupsForTestDatabase(database.ID, storage)
 
 	// Create a test backup
-	backup := backups_controllers.CreateTestBackup(database.ID, storage.ID)
+	backup := backups_controllers_logical.CreateTestBackup(database.ID, storage.ID)
 
 	// Get initial active task count
 	stats, err := restoreNodesRegistry.GetRestoreNodesStats()
@@ -544,7 +544,7 @@ func Test_StartRestore_RestoreFails_DecrementsActiveTaskCount(t *testing.T) {
 	database := databases.CreateTestDatabase(workspace.ID, storage, notifier)
 
 	defer func() {
-		backupRepo := backups_core.BackupRepository{}
+		backupRepo := backups_core_logical.BackupRepository{}
 		backups, _ := backupRepo.FindByDatabaseID(database.ID)
 		for _, backup := range backups {
 			backupRepo.DeleteByID(backup.ID)
@@ -563,10 +563,10 @@ func Test_StartRestore_RestoreFails_DecrementsActiveTaskCount(t *testing.T) {
 		workspaces_testing.RemoveTestWorkspace(workspace, router)
 	}()
 
-	backups_config.EnableBackupsForTestDatabase(database.ID, storage)
+	backups_config_logical.EnableBackupsForTestDatabase(database.ID, storage)
 
 	// Create a test backup
-	backup := backups_controllers.CreateTestBackup(database.ID, storage.ID)
+	backup := backups_controllers_logical.CreateTestBackup(database.ID, storage.ID)
 
 	// Get initial active task count
 	stats, err := restoreNodesRegistry.GetRestoreNodesStats()
@@ -636,7 +636,7 @@ func Test_StartRestore_CredentialsStoredEncryptedInCache(t *testing.T) {
 	var mockNodeID uuid.UUID
 
 	defer func() {
-		backupRepo := backups_core.BackupRepository{}
+		backupRepo := backups_core_logical.BackupRepository{}
 		backups, _ := backupRepo.FindByDatabaseID(database.ID)
 		for _, backup := range backups {
 			backupRepo.DeleteByID(backup.ID)
@@ -661,10 +661,10 @@ func Test_StartRestore_CredentialsStoredEncryptedInCache(t *testing.T) {
 		cache_utils.ClearAllCache()
 	}()
 
-	backups_config.EnableBackupsForTestDatabase(database.ID, storage)
+	backups_config_logical.EnableBackupsForTestDatabase(database.ID, storage)
 
 	// Create a test backup
-	backup := backups_controllers.CreateTestBackup(database.ID, storage.ID)
+	backup := backups_controllers_logical.CreateTestBackup(database.ID, storage.ID)
 
 	// Register mock node so scheduler can assign restore to it
 	mockNodeID = uuid.New()
@@ -681,7 +681,7 @@ func Test_StartRestore_CredentialsStoredEncryptedInCache(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Create PostgreSQL database credentials with plaintext password
-	postgresDB := &postgresql.PostgresqlDatabase{
+	postgresDB := &postgresql_logical.PostgresqlLogicalDatabase{
 		Host:     config.GetEnv().TestLocalhost,
 		Port:     5432,
 		Username: "testuser",
@@ -701,7 +701,7 @@ func Test_StartRestore_CredentialsStoredEncryptedInCache(t *testing.T) {
 
 	// Create cache with encrypted credentials
 	dbCache := &RestoreDatabaseCache{
-		PostgresqlDatabase: postgresDB,
+		PostgresqlLogicalDatabase: postgresDB,
 	}
 
 	// Call StartRestore to cache credentials (do NOT start restore node)
@@ -711,19 +711,19 @@ func Test_StartRestore_CredentialsStoredEncryptedInCache(t *testing.T) {
 	// Directly read from cache
 	cachedData := restoreDatabaseCache.Get(restore.ID.String())
 	assert.NotNil(t, cachedData, "Cache entry should exist")
-	assert.NotNil(t, cachedData.PostgresqlDatabase, "PostgreSQL credentials should be cached")
+	assert.NotNil(t, cachedData.PostgresqlLogicalDatabase, "PostgreSQL credentials should be cached")
 
 	// Verify password in cache is encrypted (not plaintext)
-	assert.NotEqual(t, plaintextPassword, cachedData.PostgresqlDatabase.Password,
+	assert.NotEqual(t, plaintextPassword, cachedData.PostgresqlLogicalDatabase.Password,
 		"Cached password should be encrypted, not plaintext")
-	assert.Equal(t, postgresDB.Password, cachedData.PostgresqlDatabase.Password,
+	assert.Equal(t, postgresDB.Password, cachedData.PostgresqlLogicalDatabase.Password,
 		"Cached password should match the encrypted version")
 
 	// Verify other fields are present
-	assert.Equal(t, config.GetEnv().TestLocalhost, cachedData.PostgresqlDatabase.Host)
-	assert.Equal(t, 5432, cachedData.PostgresqlDatabase.Port)
-	assert.Equal(t, "testuser", cachedData.PostgresqlDatabase.Username)
-	assert.Equal(t, "testdb", *cachedData.PostgresqlDatabase.Database)
+	assert.Equal(t, config.GetEnv().TestLocalhost, cachedData.PostgresqlLogicalDatabase.Host)
+	assert.Equal(t, 5432, cachedData.PostgresqlLogicalDatabase.Port)
+	assert.Equal(t, "testuser", cachedData.PostgresqlLogicalDatabase.Username)
+	assert.Equal(t, "testdb", *cachedData.PostgresqlLogicalDatabase.Database)
 
 	time.Sleep(200 * time.Millisecond)
 }
@@ -755,7 +755,7 @@ func Test_StartRestore_CredentialsRemovedAfterRestoreStarts(t *testing.T) {
 	database := databases.CreateTestDatabase(workspace.ID, storage, notifier)
 
 	defer func() {
-		backupRepo := backups_core.BackupRepository{}
+		backupRepo := backups_core_logical.BackupRepository{}
 		backups, _ := backupRepo.FindByDatabaseID(database.ID)
 		for _, backup := range backups {
 			backupRepo.DeleteByID(backup.ID)
@@ -776,10 +776,10 @@ func Test_StartRestore_CredentialsRemovedAfterRestoreStarts(t *testing.T) {
 		cache_utils.ClearAllCache()
 	}()
 
-	backups_config.EnableBackupsForTestDatabase(database.ID, storage)
+	backups_config_logical.EnableBackupsForTestDatabase(database.ID, storage)
 
 	// Create a test backup
-	backup := backups_controllers.CreateTestBackup(database.ID, storage.ID)
+	backup := backups_controllers_logical.CreateTestBackup(database.ID, storage.ID)
 
 	// Create restore with credentials
 	plaintextPassword := "test_password_456"
@@ -792,7 +792,7 @@ func Test_StartRestore_CredentialsRemovedAfterRestoreStarts(t *testing.T) {
 
 	// Create PostgreSQL database credentials
 	// Database field is nil to avoid PopulateDbData trying to connect
-	postgresDB := &postgresql.PostgresqlDatabase{
+	postgresDB := &postgresql_logical.PostgresqlLogicalDatabase{
 		Host:     config.GetEnv().TestLocalhost,
 		Port:     5432,
 		Username: "testuser",
@@ -810,7 +810,7 @@ func Test_StartRestore_CredentialsRemovedAfterRestoreStarts(t *testing.T) {
 
 	// Create cache with encrypted credentials
 	dbCache := &RestoreDatabaseCache{
-		PostgresqlDatabase: postgresDB,
+		PostgresqlLogicalDatabase: postgresDB,
 	}
 
 	// Call StartRestore to cache credentials and trigger restore
@@ -832,17 +832,17 @@ func Test_StartRestore_CredentialsRemovedAfterRestoreStarts(t *testing.T) {
 
 	// Verify mock received valid credentials
 	assert.NotNil(t, capturedDB, "Captured database should not be nil")
-	assert.NotNil(t, capturedDB.Postgresql, "PostgreSQL credentials should be provided to usecase")
-	assert.Equal(t, config.GetEnv().TestLocalhost, capturedDB.Postgresql.Host)
-	assert.Equal(t, 5432, capturedDB.Postgresql.Port)
-	assert.Equal(t, "testuser", capturedDB.Postgresql.Username)
-	assert.NotEmpty(t, capturedDB.Postgresql.Password, "Password should be provided to usecase")
+	assert.NotNil(t, capturedDB.PostgresqlLogical, "PostgreSQL credentials should be provided to usecase")
+	assert.Equal(t, config.GetEnv().TestLocalhost, capturedDB.PostgresqlLogical.Host)
+	assert.Equal(t, 5432, capturedDB.PostgresqlLogical.Port)
+	assert.Equal(t, "testuser", capturedDB.PostgresqlLogical.Username)
+	assert.NotEmpty(t, capturedDB.PostgresqlLogical.Password, "Password should be provided to usecase")
 
 	// Note: Password at this point may still be encrypted because PopulateDbData
 	// is called after the mock captures it. The important thing is that credentials
 	// were provided to the usecase despite cache being deleted.
 	t.Logf("Encrypted password in cache: %s", encryptedPassword)
-	t.Logf("Password received by usecase: %s", capturedDB.Postgresql.Password)
+	t.Logf("Password received by usecase: %s", capturedDB.PostgresqlLogical.Password)
 
 	// Wait for restore to complete
 	WaitForRestoreCompletion(t, restore.ID, 10*time.Second)

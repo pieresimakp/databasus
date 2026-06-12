@@ -6,11 +6,16 @@ This is NOT a strict set of rules — it is a set of recommendations to help wri
 Per-folder rules live next to the code they govern:
 
 - [`backend/CLAUDE.md`](backend/CLAUDE.md) — Go + Gin + GORM + PostgreSQL backend (controllers, migrations, CRUD, DI, testing, logging)
-- [`agent/backup/CLAUDE.md`](agent/backup/CLAUDE.md) — Go agent CLI (no HTTP server, no schema; shares Go conventions with the backend)
 - [`agent/verification/CLAUDE.md`](agent/verification/CLAUDE.md) — Go verification agent CLI (self-update + capacity heartbeat; restore logic deferred)
 - [`frontend/CLAUDE.md`](frontend/CLAUDE.md) — React 19 + TypeScript + Vite + Ant Design + Tailwind
 
 This root file holds the engineering philosophy that applies everywhere.
+
+---
+
+## Development environment
+
+Work happens inside the repo's [Dev Container](.devcontainer/devcontainer.json). The container ships Go, Node.js + pnpm, Docker-in-Docker, linters and matching VS Code extensions, so the toolchain is identical for every contributor. Ports `4005` (backend) and `5173` (Vite) are forwarded automatically. Don't install or rely on host-level SDKs — run `make`, `pnpm` and `docker` commands from inside the container.
 
 ---
 

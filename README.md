@@ -39,8 +39,8 @@
 
 ### 💾 **Supported databases**
 
-- **PostgreSQL**: 12, 13, 14, 15, 16, 17 and 18
-- **MySQL**: 5.7, 8 and 9
+- **PostgreSQL**: 14, 15, 16, 17 and 18
+- **MySQL**: 5.7 and 8
 - **MariaDB**: 10, 11 and 12
 - **MongoDB**: 4.2+, 5, 6, 7 and 8
 

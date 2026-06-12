@@ -6,8 +6,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"databasus-backend/internal/config"
 	backups_services "databasus-backend/internal/features/backups/backups/services"
-	backups_config "databasus-backend/internal/features/backups/config"
+	backups_config_logical "databasus-backend/internal/features/backups/config/logical"
 	"databasus-backend/internal/features/databases"
 	restores_core "databasus-backend/internal/features/restores/core"
 	"databasus-backend/internal/features/restores/usecases"
@@ -20,13 +21,14 @@ import (
 
 var restoreRepository = &restores_core.RestoreRepository{}
 
-var restoreNodesRegistry = &RestoreNodesRegistry{
-	client:            cache_utils.GetValkeyClient(),
-	logger:            logger.GetLogger(),
-	timeout:           cache_utils.DefaultCacheTimeout,
-	pubsubRestores:    cache_utils.NewPubSubManager(),
-	pubsubCompletions: cache_utils.NewPubSubManager(),
-}
+var restoreNodesRegistry = NewRestoreNodesRegistry(
+	cache_utils.GetValkeyClient(),
+	logger.GetLogger(),
+	cache_utils.DefaultCacheTimeout,
+	cache_utils.NewPubSubManager(),
+	cache_utils.NewPubSubManager(),
+	config.GetEnv().CacheNamespace,
+)
 
 var restoreDatabaseCache = cache_utils.NewCacheUtil[RestoreDatabaseCache](
 	cache_utils.GetValkeyClient(),
@@ -41,7 +43,7 @@ var restorerNode = &RestorerNode{
 	backups_services.GetBackupService(),
 	encryption.GetFieldEncryptor(),
 	restoreRepository,
-	backups_config.GetBackupConfigService(),
+	backups_config_logical.GetBackupConfigService(),
 	storages.GetStorageService(),
 	restoreNodesRegistry,
 	logger.GetLogger(),
@@ -56,7 +58,7 @@ var restoresScheduler = &RestoresScheduler{
 	restoreRepository,
 	backups_services.GetBackupService(),
 	storages.GetStorageService(),
-	backups_config.GetBackupConfigService(),
+	backups_config_logical.GetBackupConfigService(),
 	restoreNodesRegistry,
 	time.Now().UTC(),
 	logger.GetLogger(),

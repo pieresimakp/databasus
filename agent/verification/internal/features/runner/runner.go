@@ -492,7 +492,7 @@ func (r *Runner) sendReport(
 }
 
 func pgMajorFromDatabase(db api.AssignedDatabase) (string, error) {
-	if db.Type != "POSTGRES" {
+	if db.Type != "POSTGRES_LOGICAL" {
 		return "", fmt.Errorf("unsupported database type %q (v1 is Postgres only)", db.Type)
 	}
 

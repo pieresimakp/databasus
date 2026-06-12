@@ -8,7 +8,7 @@ import { Button, Input, Spin } from 'antd';
 import { useState } from 'react';
 import { useEffect } from 'react';
 
-import { backupConfigApi } from '../../../entity/backups';
+import { logicalBackupConfigApi } from '../../../entity/backups/logical';
 import { storageApi } from '../../../entity/storages';
 import type { Storage } from '../../../entity/storages';
 import { type UserProfile, UserRole } from '../../../entity/users';
@@ -82,7 +82,7 @@ export const StorageComponent = ({
     setIsRemoving(true);
 
     try {
-      const isStorageUsing = await backupConfigApi.isStorageUsing(storage.id);
+      const isStorageUsing = await logicalBackupConfigApi.isStorageUsing(storage.id);
       if (isStorageUsing) {
         alert('Storage is used by some databases. Please remove the storage from databases first.');
         setIsShowRemoveConfirm(false);

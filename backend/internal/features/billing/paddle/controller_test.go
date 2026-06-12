@@ -27,7 +27,7 @@ import (
 	billing_repositories "databasus-backend/internal/features/billing/repositories"
 	billing_webhooks "databasus-backend/internal/features/billing/webhooks"
 	"databasus-backend/internal/features/databases"
-	"databasus-backend/internal/features/databases/databases/postgresql"
+	postgresql_logical "databasus-backend/internal/features/databases/databases/postgresql/logical"
 	users_dto "databasus-backend/internal/features/users/dto"
 	users_enums "databasus-backend/internal/features/users/enums"
 	users_middleware "databasus-backend/internal/features/users/middleware"
@@ -695,17 +695,17 @@ func setupPaddleTest(t *testing.T) (*gin.Engine, *users_dto.SignInResponseDTO, *
 
 func createTestDatabaseForPaddle(token string, workspaceID uuid.UUID, router *gin.Engine) *databases.Database {
 	env := config.GetEnv()
-	port, err := strconv.Atoi(env.TestPostgres16Port)
+	port, err := strconv.Atoi(env.TestLogicalPostgres16Port)
 	if err != nil {
-		panic(fmt.Sprintf("failed to parse TEST_POSTGRES_16_PORT: %v", err))
+		panic(fmt.Sprintf("failed to parse TEST_LOGICAL_POSTGRES_16_PORT: %v", err))
 	}
 
 	dbName := "testdb"
 	request := databases.Database{
 		Name:        "paddle-test-" + uuid.New().String()[:8],
 		WorkspaceID: &workspaceID,
-		Type:        databases.DatabaseTypePostgres,
-		Postgresql: &postgresql.PostgresqlDatabase{
+		Type:        databases.DatabaseTypePostgresLogical,
+		PostgresqlLogical: &postgresql_logical.PostgresqlLogicalDatabase{
 			Version:  tools.PostgresqlVersion16,
 			Host:     env.TestLocalhost,
 			Port:     port,

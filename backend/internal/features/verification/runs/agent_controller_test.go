@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"databasus-backend/internal/features/backups/backups/backuping"
-	backups_core "databasus-backend/internal/features/backups/backups/core"
+	backuping_logical "databasus-backend/internal/features/backups/backups/backuping/logical"
+	backups_core_logical "databasus-backend/internal/features/backups/backups/core/logical"
 	"databasus-backend/internal/features/databases"
 	"databasus-backend/internal/features/notifiers"
 	"databasus-backend/internal/features/storages"
@@ -46,7 +46,7 @@ func Test_ClaimVerification_WhenPendingFitsBudget_ReturnsJobAssignment(t *testin
 	database := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(database)
 
-	backup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100)
+	backup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100)
 
 	enqueued := EnqueueManualVerificationViaAPI(t, router, owner.Token, backup.ID)
 
@@ -63,9 +63,9 @@ func Test_ClaimVerification_WhenPendingFitsBudget_ReturnsJobAssignment(t *testin
 	assert.InDelta(t, 100, assignment.BackupSizeMb, 0.001)
 	assert.InDelta(t, float64(EstimateRequiredForRestoreDiskMb(backup)), assignment.MaxContainerDiskMb, 0.001)
 	require.NotNil(t, assignment.Database)
-	assert.Equal(t, databases.DatabaseTypePostgres, assignment.Database.Type)
-	require.NotNil(t, assignment.Database.Postgresql)
-	assert.Equal(t, "16", string(assignment.Database.Postgresql.Version))
+	assert.Equal(t, databases.DatabaseTypePostgresLogical, assignment.Database.Type)
+	require.NotNil(t, assignment.Database.PostgresqlLogical)
+	assert.Equal(t, "16", string(assignment.Database.PostgresqlLogical.Version))
 
 	updated := GetVerificationByIDViaAPI(t, router, owner.Token, enqueued.ID)
 	assert.Equal(t, VerificationStatusRunning, updated.Status)
@@ -88,7 +88,7 @@ func Test_ClaimVerification_WhenBackupTooBigForBudget_DoNotAssignJobWithoutError
 	database := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(database)
 
-	largeBackup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100*1024)
+	largeBackup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100*1024)
 
 	EnqueueManualVerificationViaAPI(t, router, owner.Token, largeBackup.ID)
 
@@ -121,8 +121,8 @@ func Test_ClaimVerification_WhenMultiplePendingFit_ReturnsOldestThatFitsBudget(t
 	databaseBig := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(databaseBig)
 
-	oldBig := backuping.SeedTestBackup(t, databaseBig.ID, testStorage.ID, 4*1024)
-	youngSmall := backuping.SeedTestBackup(t, databaseSmall.ID, testStorage.ID, 100)
+	oldBig := backuping_logical.SeedTestBackup(t, databaseBig.ID, testStorage.ID, 4*1024)
+	youngSmall := backuping_logical.SeedTestBackup(t, databaseSmall.ID, testStorage.ID, 100)
 
 	oldVerification := EnqueueManualVerificationViaAPI(t, router, owner.Token, oldBig.ID)
 	require.NoError(t, storage.GetDb().
@@ -163,8 +163,8 @@ func Test_ClaimVerification_WhenAgentHasRunningRows_DeductsTheirSizeFromBudget(t
 	databasePending := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(databasePending)
 
-	bigBackup := backuping.SeedTestBackup(t, databaseRunning.ID, testStorage.ID, 1000)
-	pendingBackup := backuping.SeedTestBackup(t, databasePending.ID, testStorage.ID, 1000)
+	bigBackup := backuping_logical.SeedTestBackup(t, databaseRunning.ID, testStorage.ID, 1000)
+	pendingBackup := backuping_logical.SeedTestBackup(t, databasePending.ID, testStorage.ID, 1000)
 
 	agent := verification_agents.CreateTestVerificationAgent(t, router, owner.Token, "budget-"+uuid.New().String())
 	defer verification_agents.RemoveTestVerificationAgent(t, router, owner.Token, agent.Agent.ID)
@@ -211,7 +211,7 @@ func Test_ClaimVerification_WhenAlreadyClaimedByAnotherAgent_OnlyReassignsAfterC
 	database := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(database)
 
-	backup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100)
+	backup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100)
 
 	originalRow := EnqueueManualVerificationViaAPI(t, router, owner.Token, backup.ID)
 
@@ -276,7 +276,7 @@ func Test_SubmitReport_WhenStatusCompleted_PersistsResultsAndTableStats(t *testi
 	database := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(database)
 
-	backup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100)
+	backup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100)
 	agent := verification_agents.CreateTestVerificationAgent(t, router, owner.Token, "report-"+uuid.New().String())
 	defer verification_agents.RemoveTestVerificationAgent(t, router, owner.Token, agent.Agent.ID)
 
@@ -325,7 +325,7 @@ func Test_SubmitReport_WhenStatusCompleted_PersistsResultsAndTableStats(t *testi
 	verifiedBackup := GetBackupViaAPI(t, router, owner.Token, database.ID, backup.ID)
 	assert.Equal(
 		t,
-		backups_core.RestoreVerificationStatusVerifiedSuccessful,
+		backups_core_logical.RestoreVerificationStatusVerifiedSuccessful,
 		verifiedBackup.RestoreVerificationStatus,
 		"a terminal COMPLETED verification must stamp the backup VERIFIED_SUCCESSFUL",
 	)
@@ -346,7 +346,7 @@ func Test_SubmitReport_WhenRowWasReapedWhileAgentWasSilent_Returns410(t *testing
 	database := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(database)
 
-	backup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100)
+	backup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100)
 
 	agent := verification_agents.CreateTestVerificationAgent(t, router, owner.Token, "silent-"+uuid.New().String())
 	defer verification_agents.RemoveTestVerificationAgent(t, router, owner.Token, agent.Agent.ID)
@@ -383,7 +383,7 @@ func Test_SubmitReport_WhenAgentReportsBackupRejected_StoresMessageVerbatimAndTe
 	database := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(database)
 
-	backup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100)
+	backup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100)
 	agent := verification_agents.CreateTestVerificationAgent(t, router, owner.Token, "fail-"+uuid.New().String())
 	defer verification_agents.RemoveTestVerificationAgent(t, router, owner.Token, agent.Agent.ID)
 
@@ -423,7 +423,7 @@ func Test_SubmitReport_WhenAgentReportsBackupRejected_StoresMessageVerbatimAndTe
 	rejectedBackup := GetBackupViaAPI(t, router, owner.Token, database.ID, backup.ID)
 	assert.Equal(
 		t,
-		backups_core.RestoreVerificationStatusVerificationFailed,
+		backups_core_logical.RestoreVerificationStatusVerificationFailed,
 		rejectedBackup.RestoreVerificationStatus,
 		"a PG-error terminal failure must stamp the backup VERIFICATION_FAILED",
 	)
@@ -444,7 +444,7 @@ func Test_SubmitReport_WhenAgentReportsDiskLimitExceeded_MarksTerminalWithoutRet
 	database := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(database)
 
-	backup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100)
+	backup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100)
 	agent := verification_agents.CreateTestVerificationAgent(t, router, owner.Token, "disk-"+uuid.New().String())
 	defer verification_agents.RemoveTestVerificationAgent(t, router, owner.Token, agent.Agent.ID)
 
@@ -487,7 +487,7 @@ func Test_SubmitReport_WhenAgentReportsDiskLimitExceeded_MarksTerminalWithoutRet
 	rejectedBackup := GetBackupViaAPI(t, router, owner.Token, database.ID, backup.ID)
 	assert.Equal(
 		t,
-		backups_core.RestoreVerificationStatusVerificationFailed,
+		backups_core_logical.RestoreVerificationStatusVerificationFailed,
 		rejectedBackup.RestoreVerificationStatus,
 		"a terminal disk-limit failure must stamp the backup VERIFICATION_FAILED",
 	)
@@ -508,7 +508,7 @@ func Test_SubmitReport_WhenAgentSetupFailedWithRetriesRemaining_RequeuesVerifica
 	database := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(database)
 
-	backup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100)
+	backup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100)
 	agent := verification_agents.CreateTestVerificationAgent(t, router, owner.Token, "retry-"+uuid.New().String())
 	defer verification_agents.RemoveTestVerificationAgent(t, router, owner.Token, agent.Agent.ID)
 
@@ -539,7 +539,7 @@ func Test_SubmitReport_WhenAgentSetupFailedWithRetriesRemaining_RequeuesVerifica
 	requeuedBackup := GetBackupViaAPI(t, router, owner.Token, database.ID, backup.ID)
 	assert.Equal(
 		t,
-		backups_core.RestoreVerificationStatusNotVerified,
+		backups_core_logical.RestoreVerificationStatusNotVerified,
 		requeuedBackup.RestoreVerificationStatus,
 		"a requeued (non-terminal) agent-side failure must leave the backup NOT_VERIFIED",
 	)
@@ -560,7 +560,7 @@ func Test_SubmitReport_WhenAgentSetupFailedRepeatedly_MarksTerminalAfterMaxAttem
 	database := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(database)
 
-	backup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100)
+	backup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100)
 	agent := verification_agents.CreateTestVerificationAgent(t, router, owner.Token, "exhaust-"+uuid.New().String())
 	defer verification_agents.RemoveTestVerificationAgent(t, router, owner.Token, agent.Agent.ID)
 
@@ -599,7 +599,7 @@ func Test_SubmitReport_WhenAgentSetupFailedRepeatedly_MarksTerminalAfterMaxAttem
 	failedAfterAllRetriesBackup := GetBackupViaAPI(t, router, owner.Token, database.ID, backup.ID)
 	assert.Equal(
 		t,
-		backups_core.RestoreVerificationStatusVerificationFailed,
+		backups_core_logical.RestoreVerificationStatusVerificationFailed,
 		failedAfterAllRetriesBackup.RestoreVerificationStatus,
 		"agent-side failures that exhaust all retries are terminal → backup VERIFICATION_FAILED",
 	)
@@ -622,7 +622,7 @@ func Test_SubmitReport_WhenCompletedButRestoredSizeBelow20Percent_MarksTerminalW
 
 	// Backup with a recorded raw DB size of 100 MB ≈ 104_857_600 bytes — the 20%
 	// floor is therefore ~20 MB. Reporting a 1 MB restored DB must trip the guard.
-	backup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100)
+	backup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100)
 
 	agent := verification_agents.CreateTestVerificationAgent(
 		t,
@@ -661,7 +661,7 @@ func Test_SubmitReport_WhenCompletedButRestoredSizeBelow20Percent_MarksTerminalW
 	tooSmallBackup := GetBackupViaAPI(t, router, owner.Token, database.ID, backup.ID)
 	assert.Equal(
 		t,
-		backups_core.RestoreVerificationStatusVerificationFailed,
+		backups_core_logical.RestoreVerificationStatusVerificationFailed,
 		tooSmallBackup.RestoreVerificationStatus,
 		"a too-small restore routes through the failure path → backup VERIFICATION_FAILED, never successful",
 	)
@@ -684,8 +684,8 @@ func Test_Heartbeat_WhenReportedJobIsCanceledOrDeleted_ReturnsItAsAbortID(t *tes
 	databaseCanceled := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(databaseCanceled)
 
-	runningBackup := backuping.SeedTestBackup(t, databaseRunning.ID, testStorage.ID, 100)
-	canceledBackup := backuping.SeedTestBackup(t, databaseCanceled.ID, testStorage.ID, 100)
+	runningBackup := backuping_logical.SeedTestBackup(t, databaseRunning.ID, testStorage.ID, 100)
+	canceledBackup := backuping_logical.SeedTestBackup(t, databaseCanceled.ID, testStorage.ID, 100)
 
 	agent := verification_agents.CreateTestVerificationAgent(t, router, owner.Token, "hb-"+uuid.New().String())
 	defer verification_agents.RemoveTestVerificationAgent(t, router, owner.Token, agent.Agent.ID)
@@ -748,7 +748,7 @@ func Test_CancelVerification_WhenRunning_AgentHeartbeatReturnsIDAsAbort(t *testi
 	database := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(database)
 
-	backup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100)
+	backup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100)
 
 	agent := verification_agents.CreateTestVerificationAgent(
 		t,
@@ -788,7 +788,7 @@ func Test_CancelVerification_WhenRunning_AgentHeartbeatReturnsIDAsAbort(t *testi
 	canceledBackup := GetBackupViaAPI(t, router, owner.Token, database.ID, backup.ID)
 	assert.Equal(
 		t,
-		backups_core.RestoreVerificationStatusNotVerified,
+		backups_core_logical.RestoreVerificationStatusNotVerified,
 		canceledBackup.RestoreVerificationStatus,
 		"cancellation bypasses the terminal hook → backup stays NOT_VERIFIED",
 	)
@@ -809,12 +809,12 @@ func Test_GetBackups_WhenBackupNeverVerified_StatusIsNotVerified(t *testing.T) {
 	database := databases.CreateTestDatabase(workspace.ID, testStorage, notifier)
 	defer databases.RemoveTestDatabase(database)
 
-	backup := backuping.SeedTestBackup(t, database.ID, testStorage.ID, 100)
+	backup := backuping_logical.SeedTestBackup(t, database.ID, testStorage.ID, 100)
 
 	freshBackup := GetBackupViaAPI(t, router, owner.Token, database.ID, backup.ID)
 	assert.Equal(
 		t,
-		backups_core.RestoreVerificationStatusNotVerified,
+		backups_core_logical.RestoreVerificationStatusNotVerified,
 		freshBackup.RestoreVerificationStatus,
 		"a backup that was never verified defaults to NOT_VERIFIED via the column default",
 	)

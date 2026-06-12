@@ -158,6 +158,7 @@ func Test_SendTestNotificationDirect_NotificationSent(t *testing.T) {
 	router := createRouter()
 	workspace := workspaces_testing.CreateTestWorkspace("Test Workspace", owner, router)
 
+	GetWebhookStub().ResetCalls()
 	notifier := createWebhookNotifier(workspace.ID)
 
 	response := test_utils.MakePostRequest(
@@ -165,6 +166,8 @@ func Test_SendTestNotificationDirect_NotificationSent(t *testing.T) {
 	)
 
 	assert.Contains(t, string(response.Body), "successful")
+	assert.Greater(t, GetWebhookStub().CallCount(), 0)
+
 	workspaces_testing.RemoveTestWorkspace(workspace, router)
 }
 
@@ -173,6 +176,7 @@ func Test_SendTestNotificationExisting_NotificationSent(t *testing.T) {
 	router := createRouter()
 	workspace := workspaces_testing.CreateTestWorkspace("Test Workspace", owner, router)
 
+	GetWebhookStub().ResetCalls()
 	notifier := createWebhookNotifier(workspace.ID)
 
 	var savedNotifier Notifier
@@ -196,6 +200,7 @@ func Test_SendTestNotificationExisting_NotificationSent(t *testing.T) {
 	)
 
 	assert.Contains(t, string(response.Body), "successful")
+	assert.Greater(t, GetWebhookStub().CallCount(), 0)
 
 	deleteNotifier(t, router, savedNotifier.ID, workspace.ID, owner.Token)
 	workspaces_testing.RemoveTestWorkspace(workspace, router)
@@ -1240,7 +1245,7 @@ func createNewNotifier(workspaceID uuid.UUID) *Notifier {
 		Name:         "Test Notifier " + uuid.New().String(),
 		NotifierType: NotifierTypeWebhook,
 		WebhookNotifier: &webhook_notifier.WebhookNotifier{
-			WebhookURL:    "https://webhook.site/test-" + uuid.New().String(),
+			WebhookURL:    GetWebhookStub().URL() + "/test-" + uuid.New().String(),
 			WebhookMethod: webhook_notifier.WebhookMethodPOST,
 		},
 	}
@@ -1252,7 +1257,7 @@ func createWebhookNotifier(workspaceID uuid.UUID) *Notifier {
 		Name:         "Test Webhook Notifier " + uuid.New().String(),
 		NotifierType: NotifierTypeWebhook,
 		WebhookNotifier: &webhook_notifier.WebhookNotifier{
-			WebhookURL:    "https://databasus.com",
+			WebhookURL:    GetWebhookStub().URL(),
 			WebhookMethod: webhook_notifier.WebhookMethodGET,
 		},
 	}

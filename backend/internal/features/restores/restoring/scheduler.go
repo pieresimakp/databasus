@@ -11,7 +11,7 @@ import (
 
 	"databasus-backend/internal/config"
 	backups_services "databasus-backend/internal/features/backups/backups/services"
-	backups_config "databasus-backend/internal/features/backups/config"
+	backups_config_logical "databasus-backend/internal/features/backups/config/logical"
 	restores_core "databasus-backend/internal/features/restores/core"
 	"databasus-backend/internal/features/storages"
 	cache_utils "databasus-backend/internal/util/cache"
@@ -25,9 +25,9 @@ const (
 
 type RestoresScheduler struct {
 	restoreRepository        *restores_core.RestoreRepository
-	backupService            *backups_services.BackupService
+	backupService            *backups_services.LogicalBackupService
 	storageService           *storages.StorageService
-	backupConfigService      *backups_config.BackupConfigService
+	backupConfigService      *backups_config_logical.BackupConfigService
 	restoreNodesRegistry     *RestoreNodesRegistry
 	lastCheckTime            time.Time
 	logger                   *slog.Logger
@@ -110,10 +110,10 @@ func (s *RestoresScheduler) StartRestore(restoreID uuid.UUID, dbCache *RestoreDa
 
 		// Create cache DTO from restore (may be nil if not in DB)
 		dbCache = &RestoreDatabaseCache{
-			PostgresqlDatabase: restore.PostgresqlDatabase,
-			MysqlDatabase:      restore.MysqlDatabase,
-			MariadbDatabase:    restore.MariadbDatabase,
-			MongodbDatabase:    restore.MongodbDatabase,
+			PostgresqlLogicalDatabase: restore.PostgresqlLogicalDatabase,
+			MysqlDatabase:             restore.MysqlDatabase,
+			MariadbDatabase:           restore.MariadbDatabase,
+			MongodbDatabase:           restore.MongodbDatabase,
 		}
 	}
 

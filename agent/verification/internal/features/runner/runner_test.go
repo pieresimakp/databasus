@@ -33,7 +33,7 @@ func postgresJob() *api.JobAssignment {
 		BackupSizeMb:       50,
 		MaxContainerDiskMb: 200,
 		Database: api.AssignedDatabase{
-			Type:       "POSTGRES",
+			Type:       "POSTGRES_LOGICAL",
 			Postgresql: &api.AssignedPostgresql{Version: "16"},
 		},
 	}

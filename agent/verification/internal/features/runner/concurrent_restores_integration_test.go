@@ -199,7 +199,7 @@ func makeConcurrentAssignment(id uuid.UUID) *api.JobAssignment {
 		BackupSizeMb:       1,
 		MaxContainerDiskMb: 0,
 		Database: api.AssignedDatabase{
-			Type:       "POSTGRES",
+			Type:       "POSTGRES_LOGICAL",
 			Postgresql: &api.AssignedPostgresql{Version: "16"},
 		},
 	}

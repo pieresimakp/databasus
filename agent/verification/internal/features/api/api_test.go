@@ -52,7 +52,7 @@ func Test_ClaimVerification_WhenServer200_SendsNestedMaxRamMbAndDeserializes(t *
 			"backupSizeMb":       120.5,
 			"maxContainerDiskMb": 800.25,
 			"database": map[string]any{
-				"type":       "POSTGRES",
+				"type":       "POSTGRES_LOGICAL",
 				"postgresql": map[string]any{"version": "16"},
 			},
 		})
@@ -81,7 +81,7 @@ func Test_ClaimVerification_WhenServer200_SendsNestedMaxRamMbAndDeserializes(t *
 	assert.Equal(t, backupID, assignment.BackupID)
 	assert.InDelta(t, 120.5, assignment.BackupSizeMb, 0.001)
 	assert.InDelta(t, 800.25, assignment.MaxContainerDiskMb, 0.001)
-	assert.Equal(t, "POSTGRES", assignment.Database.Type)
+	assert.Equal(t, "POSTGRES_LOGICAL", assignment.Database.Type)
 	require.NotNil(t, assignment.Database.Postgresql)
 	assert.Equal(t, "16", assignment.Database.Postgresql.Version)
 }

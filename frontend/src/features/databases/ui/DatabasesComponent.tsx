@@ -26,6 +26,7 @@ export const DatabasesComponent = ({ contentHeight, workspace, user, isCanManage
   const [searchQuery, setSearchQuery] = useState('');
 
   const [isShowAddDatabase, setIsShowAddDatabase] = useState(false);
+  const [hasConnectionError, setHasConnectionError] = useState(false);
   const [selectedDatabaseId, setSelectedDatabaseId] = useState<string | undefined>(undefined);
 
   const updateSelectedDatabaseId = (databaseId: string | undefined) => {
@@ -83,7 +84,14 @@ export const DatabasesComponent = ({ contentHeight, workspace, user, isCanManage
   }
 
   const addDatabaseButton = (
-    <Button type="primary" className="mb-2 w-full" onClick={() => setIsShowAddDatabase(true)}>
+    <Button
+      type="primary"
+      className="mb-2 w-full"
+      onClick={() => {
+        setHasConnectionError(false);
+        setIsShowAddDatabase(true);
+      }}
+    >
       Add database
     </Button>
   );
@@ -183,7 +191,8 @@ export const DatabasesComponent = ({ contentHeight, workspace, user, isCanManage
           open={isShowAddDatabase}
           onCancel={() => setIsShowAddDatabase(false)}
           maskClosable={false}
-          width={420}
+          closable={!hasConnectionError}
+          width={hasConnectionError ? 640 : 420}
         >
           <div className="mt-5" />
 
@@ -195,6 +204,7 @@ export const DatabasesComponent = ({ contentHeight, workspace, user, isCanManage
               setIsShowAddDatabase(false);
             }}
             onClose={() => setIsShowAddDatabase(false)}
+            onConnectionErrorChange={setHasConnectionError}
           />
         </Modal>
       )}
